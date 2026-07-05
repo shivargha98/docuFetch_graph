@@ -1,0 +1,19 @@
+services:
+  claude:
+    build: .
+    image: claude-sandbox
+    container_name: claude-sandbox
+    command: ["--dangerously-skip-permissions"]
+    stdin_open: true   # keeps STDIN open (-i)
+    tty: true          # allocates a pseudo-TTY (-t)
+    volumes:
+      # Persist OAuth credentials across container restarts
+      - claude-auth:/home/claude/.claude
+      # Mount current directory as workspace (optional — remove if not needed)
+      - .:/workspace
+    environment:
+      # Needed for OAuth browser-redirect during first login
+      - TERM=xterm-256color
+
+volumes:
+  claude-auth:
