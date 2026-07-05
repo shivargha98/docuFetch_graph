@@ -13,7 +13,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code globally
-RUN npm install -g @anthropic-ai/claude-code
+# Bump CLAUDE_CODE_VERSION (via docker-compose build args or --build-arg) to
+# pull a newer release — otherwise Docker's layer cache keeps this pinned
+# even across rebuilds.
+ARG CLAUDE_CODE_VERSION=latest
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # --dangerously-skip-permissions refuses to run as root, so use a non-root user
 # Give claude a writable npm prefix so auto-updates don't fail with permission errors

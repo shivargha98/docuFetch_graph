@@ -4,7 +4,6 @@
 
 **docuFetch_graph** is a personal LLM Wiki, it ingests folders, creates graph based linkages of concepts in the files. The concept linkages can between concepts in two different files as well. A simple web chat UI that lets the user point to the folder directory, the application creates a graph based view of the concepts, a chat module besides the graph view where the user can ask questions & the application shows in real time how the LLM is actually fetching the data (actual graph traversals); the final answer can be just 4-5 line summary using Claude - Haiku. If no relevant document is found, it says so explicitly.
 
-**NOTE** : We first create the backend, test it out, then we go on to create the frontend
 
 ## Tech Stack
 
@@ -28,7 +27,7 @@ docuFetch/
         ├── prd.md                  <- Product requirements document
         ├── features.md             <- PRD converted to full list of features
         ├── issues.md               <- features converted to issues
-        ├── tasks.md                <- written by the agent, tracker for what tasks lie ahead
+        ├── tasks.md                <- written by the agent, tracker for what tasks lieahead
         ├── tests.md                <- Entire test plan for the backend
         ├── tests/                  <- Entire test suite for the backend
         ├── context.md              <- Memory context for the agents, stores all the important decisions.
@@ -43,11 +42,11 @@ docuFetch/
         ├── features.md             <- PRD converted to full list of features
         ├── issues.md               <- features converted to issues
         ├── tasks.md                <- written by the agent, tracker for what tasks lie ahead
-        ├── tests.md                <- Entire test plan for the backend
-        ├── tests/                  <- Entire test suite for the backend
+        ├── tests.md                <- Entire test plan for the frontend
+        ├── tests/                  <- Entire test suite for the frontend
         ├── context.md              <- Memory context for the agents, stores all the important decisions.
-        ├── frontend_context.md      <-  Memory context for the agents, for frontend work
-        ├── frontend_TASKS.md        <- written by the frontend orchestrator agent, on to track the feature/issue builds
+        ├── frontend_context.md     <-  Memory context for the agents, for frontend work
+        ├── frontend_TASKS.md       <- written by the frontend orchestrator agent, on to track the feature/issue builds
         ├── orchestrator_plan       <- written by the orchestrator planner on how we build the frontend
         ├── agent-briefs/           <- agent briefs for the worker agents
         ├── agent-reports/          <- agent reports from the worker agents

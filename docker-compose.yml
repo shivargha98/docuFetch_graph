@@ -1,6 +1,12 @@
 services:
   claude:
-    build: .
+    build:
+      context: .
+      args:
+        # Bump this (and rerun `docker compose build --no-cache`) to pick up
+        # newly released models like Sonnet 5 — otherwise the cached layer
+        # keeps whatever CLI version was installed on first build.
+        CLAUDE_CODE_VERSION: latest
     image: claude-sandbox
     container_name: claude-sandbox
     command: ["--dangerously-skip-permissions"]
