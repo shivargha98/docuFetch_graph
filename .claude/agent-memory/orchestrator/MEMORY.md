@@ -1,0 +1,3 @@
+- [Parallel worker file ownership](feedback_parallel-worker-file-ownership.md) — disjoint-file-ownership briefs (no worktrees) for shared-checkout parallel builds
+- [Worker verification discipline](feedback_worker-verification-discipline.md) — always reverify independently; session-interruption recovery via file mtimes; flaky vitest-pool timeouts
+- [docuFetch frontend ship status](project_docufetch-frontend-status.md) — SHIPPED 2026-07-06, E2E deferred (sandbox browser + backend model issues, not frontend defects)

@@ -1,0 +1,151 @@
+"""
+API/contract tests for the folder-configuration endpoint: setting/switching
+the watched folder from the UI.
+
+Endpoint contract finalized per docs/backend/backend_context.md decision #6:
+GET/POST /api/folder-config. See backend/api/config_routes.py for the
+implementation these tests exercise.
+"""
+from unittest.mock import patch
+
+import pytest
+
+from backend import config
+from backend.api import config_routes
+from backend.chat_session import session as chat_session
+
+FOLDER_CONFIG_ENDPOINT = "/api/folder-config"
+
+
+@pytest.fixture(autouse=True)
+def _reset_folder_config_state():
+    """
+    Reset config_routes' module-level `_current_folder`/`_current_watcher`
+    state before and after every test in this file, since that state is
+    process-level and would otherwise leak between tests run in the same
+    session. Any leftover watcher is stopped (best-effort; a watcher whose
+    `.start()` was mocked out in a given test was never actually started, so
+    `.stop()` on it may raise - that's ignored here since it's just teardown
+    of test-local state, not something under test).
+    """
+
+    def _reset():
+        if config_routes._current_watcher is not None:
+            try:
+                config_routes._current_watcher.stop()
+            except Exception:
+                pass
+        config_routes._current_folder = config.WATCH_FOLDER
+        config_routes._current_watcher = None
+
+    _reset()
+    yield
+    _reset()
+
+
+def test_first_load_reflects_watch_folder_as_default(fastapi_test_client):
+    """
+    Given a freshly started backend with WATCH_FOLDER set in .env and no
+    prior folder selection,
+    when the folder-configuration endpoint is called,
+    the response should reflect WATCH_FOLDER as the current/default folder.
+
+    Source: Feature: Folder Configuration Endpoint — criterion 1; Issue 15 — criterion 1
+    """
+    response = fastapi_test_client.get(FOLDER_CONFIG_ENDPOINT)
+    assert response.status_code == 200
+    assert response.json() == {"path": config.WATCH_FOLDER}
+
+
+def test_submitting_new_folder_path_tears_down_and_restarts_watcher(fastapi_test_client, tmp_path):
+    """
+    Given a backend actively watching folder A,
+    when a request is submitted to switch to folder B,
+    the watcher/hash-store for folder A should be torn down and a fresh one
+    started scoped to folder B.
+
+    Source: Feature: Folder Configuration Endpoint — criterion 2; Issue 15 — criterion 2
+    """
+    folder_a = tmp_path / "a"
+    folder_a.mkdir()
+    folder_b = tmp_path / "b"
+    folder_b.mkdir()
+
+    with patch.object(config_routes.FolderWatcher, "start", autospec=True) as mock_start, patch.object(
+        config_routes.FolderWatcher, "stop", autospec=True
+    ) as mock_stop:
+        response_a = fastapi_test_client.post(FOLDER_CONFIG_ENDPOINT, json={"path": str(folder_a)})
+        assert response_a.status_code == 200
+        watcher_after_a = config_routes._current_watcher
+        assert mock_start.call_count == 1
+        assert mock_stop.call_count == 0
+
+        response_b = fastapi_test_client.post(FOLDER_CONFIG_ENDPOINT, json={"path": str(folder_b)})
+        assert response_b.status_code == 200
+        watcher_after_b = config_routes._current_watcher
+
+        assert watcher_after_b is not watcher_after_a
+        mock_stop.assert_called_once_with(watcher_after_a)
+        assert mock_start.call_count == 2
+        mock_start.assert_called_with(watcher_after_b)
+
+
+def test_submitting_new_folder_path_resets_chat_session(fastapi_test_client, tmp_path):
+    """
+    Given an active chat session with turn history for folder A,
+    when a request switches the folder to B,
+    the session associated with the new folder should have no carried-over
+    turn history.
+
+    Source: Feature: Folder Configuration Endpoint — criterion 3; Issue 15 — criterion 3
+    """
+    session_a = chat_session.get_or_create_session("/some/folder/a")
+    chat_session.add_turn(session_a, "What is X?", "X is Y.")
+    assert chat_session.get_history(session_a) != []
+
+    folder_b = tmp_path / "b"
+    folder_b.mkdir()
+    response = fastapi_test_client.post(FOLDER_CONFIG_ENDPOINT, json={"path": str(folder_b)})
+    assert response.status_code == 200
+
+    session_b = chat_session.get_or_create_session(str(folder_b))
+    assert chat_session.get_history(session_b) == []
+
+
+def test_submitting_invalid_folder_path_returns_error_without_crashing(fastapi_test_client):
+    """
+    Given a running backend,
+    when a request submits a non-existent/invalid path,
+    the response should be an error (4xx) rather than a crash or hang, and
+    the backend should continue serving subsequent requests normally.
+
+    Source: Feature: Folder Configuration Endpoint — criterion 4; Issue 15 — criterion 4
+    """
+    response = fastapi_test_client.post(FOLDER_CONFIG_ENDPOINT, json={"path": "/definitely/does/not/exist/xyz"})
+    assert 400 <= response.status_code < 500
+
+    followup = fastapi_test_client.get(FOLDER_CONFIG_ENDPOINT)
+    assert followup.status_code == 200
+
+
+def test_folder_config_request_response_shape_matches_finalized_contract(fastapi_test_client, tmp_path):
+    """
+    Given a finalized folder-configuration endpoint contract,
+    when a request is made against it,
+    the request/response payload shape should match the finalized contract.
+
+    Contract (docs/backend/backend_context.md decision #6):
+    GET -> {"path": <str>}
+    POST {"path": <str>} -> 200 {"path": <str>, "status": "watching"}
+
+    Source: Issue 15 — caveat (open question: exact endpoint path/payload shape), now resolved.
+    """
+    get_response = fastapi_test_client.get(FOLDER_CONFIG_ENDPOINT)
+    assert get_response.status_code == 200
+    assert set(get_response.json().keys()) == {"path"}
+
+    new_folder = tmp_path / "shape_test_folder"
+    new_folder.mkdir()
+    post_response = fastapi_test_client.post(FOLDER_CONFIG_ENDPOINT, json={"path": str(new_folder)})
+    assert post_response.status_code == 200
+    assert post_response.json() == {"path": str(new_folder), "status": "watching"}

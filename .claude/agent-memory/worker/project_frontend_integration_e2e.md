@@ -1,0 +1,16 @@
+---
+name: project-frontend-integration-e2e
+description: Frontend Phase 7 (integration) findings — why Playwright E2E and live backend chat/ingestion couldn't run in this sandbox, and what SHIPPED means here.
+metadata:
+  type: project
+---
+
+Frontend build (all 14 issues, 4 feature rounds, see [[project_frontend_foundation]], [[project_frontend_folder_input]], [[project_frontend_graph3d]]) was marked SHIPPED on 2026-07-06 based on the Part 1 gate only (vitest 22/22 files, tsc clean, build clean) — E2E was deferred to manual verification, not achieved, because of two independent, verified (not assumed) blockers:
+
+1. **Playwright can't launch a browser in this sandbox.** `npx playwright install chromium` downloads the binary fine, but launching it fails with `error while loading shared libraries: libglib-2.0.so.0`. `--with-deps` needs sudo (`su: Authentication failure` — no sudo available). Confirmed with a throwaway `about:blank` smoke spec, so it's not app-related — a hard OS-level constraint. Don't re-attempt without either real sudo or a CI image with Chromium deps preinstalled.
+
+2. **The real backend's configured free-tier OpenRouter models are broken for this pipeline's actual prompts**, independent of #1: `nvidia/nemotron-3-ultra-550b-a55b:free` (chat/extraction) returns an empty `message.content` (backend's `extract_concepts` crashes with `TypeError: 'NoneType' object is not subscriptable`), and `nvidia/llama-nemotron-embed-vl-1b-v2:free` embedding calls raise "No embedding data received". Verified NOT a network/key/sandbox-egress issue — direct `curl` to the same OpenRouter endpoints/models with trivial prompts ("hello world"/"say hi") succeeded fine. Likely a reasoning-token-budget issue where the model's reasoning consumes the full completion budget and leaves `content` empty for these specific extraction/embedding-style prompts. A live `/ws/chat` query also just hangs forever with zero events emitted (accepted connection, then silence) — same root cause, uncaught in that code path.
+
+**Why this matters:** if a future session re-attempts real E2E against this backend, both of the above need to be fixed/worked around first: (a) get real Chromium system deps or run in an environment that has them, and (b) swap `.env`'s `OPENROUTER_LLM_MODEL`/`OPENROUTER_EMBED_MODEL` to models that actually return content for these prompts, or fix the reasoning-budget issue in `backend/clients/openrouter_client.py`. Without both, even `folder-switch-flow.spec.ts`/`responsive-tablet.spec.ts` (which don't strictly need real answers) would only exercise an empty graph, and `full-query-flow`/`no-match-flow` specs are meaningless.
+
+**How to apply:** Don't waste time re-running `npx playwright install --with-deps` in this same sandbox expecting a different result — it needs sudo that isn't there. Don't assume an OpenRouter/network problem is a sandbox egress issue — verify with a direct curl to the API first, as both real API calls worked fine outside the pipeline's specific prompts. The 4 Playwright stub specs at `docs/frontend/tests/e2e/*.spec.ts` are still unimplemented stubs (`throw new Error("Not implemented")`) — nobody has written real Playwright code against the app yet.

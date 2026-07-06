@@ -1,0 +1,73 @@
+/**
+ * Global stylesheet for docuFetch Graph.
+ * Defines the app's single visual identity: a dark, "synaptic" neon/glow theme
+ * (deep indigo-black void + a cyan/violet duotone accent pair, evoking concept
+ * nodes firing across a graph). There is no light theme and no toggle — these
+ * tokens are the only theme that exists, and `color-scheme` is pinned to dark
+ * only (no `prefers-color-scheme` branching). Centralized here as CSS variables
+ * + Tailwind v4 `@theme` bindings so every later worker pulls colors/shadows
+ * from one place instead of inventing new ones.
+ */
+@import "tailwindcss";
+
+@theme {
+  /* Base surfaces */
+  --color-void: #070812;
+  --color-glass: rgba(18, 20, 38, 0.55);
+  --color-glass-border: rgba(110, 231, 249, 0.14);
+
+  /* Signature duotone accent: cyan "ion" (primary) + violet "synapse" (secondary).
+     Used for: answers, active traversal highlights (ion), edge pulses/gradients
+     (synapse). Kept to these two hues only -- no rainbow of accents. */
+  --color-ion: #6ee7f9;
+  --color-synapse: #b389ff;
+
+  /* Muted/neutral treatment reserved for "no relevant document found" -- deliberately
+     flat and unglowing so its lack of glow reads as a meaningful signal. */
+  --color-muted: #7c8699;
+
+  /* Text */
+  --color-text-primary: #e7ecf5;
+  --color-text-secondary: #9aa3b8;
+
+  /* Typography: geometric display face for chrome/headings, humanist body face
+     for conversational content, monospace for system/telemetry readouts
+     (status lines, hop counts, node ids) so the three panels' content types
+     are visually distinguishable at a glance. */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Glow shadow utilities (shadow-glow-ion, shadow-glow-synapse, shadow-glow-soft) */
+  --shadow-glow-ion: 0 0 12px rgba(110, 231, 249, 0.55), 0 0 32px rgba(110, 231, 249, 0.25);
+  --shadow-glow-synapse: 0 0 12px rgba(179, 137, 255, 0.5), 0 0 32px rgba(179, 137, 255, 0.22);
+  --shadow-glow-soft: 0 0 24px rgba(110, 231, 249, 0.08);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-void);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+}
+
+/**
+ * Reusable glass-panel surface: translucent, blurred, hairline-bordered.
+ * Every panel in the shell (folder/graph/chat) uses this class as its base surface.
+ */
+.glass-panel {
+  background-color: var(--color-glass);
+  border: 1px solid var(--color-glass-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}

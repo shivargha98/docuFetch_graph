@@ -1,0 +1,25 @@
+services:
+  claude:
+    build:
+      context: .
+      args:
+        # Bump this (and rerun `docker compose build --no-cache`) to pick up
+        # newly released models like Sonnet 5 — otherwise the cached layer
+        # keeps whatever CLI version was installed on first build.
+        CLAUDE_CODE_VERSION: latest
+    image: claude-sandbox
+    container_name: claude-sandbox
+    command: ["--dangerously-skip-permissions"]
+    stdin_open: true   # keeps STDIN open (-i)
+    tty: true          # allocates a pseudo-TTY (-t)
+    volumes:
+      # Persist OAuth credentials across container restarts
+      - claude-auth:/home/claude/.claude
+      # Mount current directory as workspace (optional — remove if not needed)
+      - .:/workspace
+    environment:
+      # Needed for OAuth browser-redirect during first login
+      - TERM=xterm-256color
+
+volumes:
+  claude-auth:

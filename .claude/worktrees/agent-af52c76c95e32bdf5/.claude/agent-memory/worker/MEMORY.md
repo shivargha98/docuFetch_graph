@@ -1,0 +1,1 @@
+- [Worktree isolation & venv gotchas](project_worktree_isolation.md) — docs/backend files are uncommitted so worktrees lack them; copy in/out via Bash; .venv is a stale Windows venv, rebuild it.

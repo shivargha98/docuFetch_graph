@@ -1,0 +1,5 @@
+- [Worktree isolation & venv gotchas](project_worktree_isolation.md) — docs/backend files are uncommitted so worktrees lack them; copy in/out via Bash; .venv is a stale Windows venv, rebuild it.
+- [Frontend foundation decisions](project_frontend_foundation.md) — Tailwind v4 setup, md=tablet breakpoint, jest-dom/vitest import fix, state architecture, ion/synapse theme tokens.
+- [Frontend folder-input (Round 2)](project_frontend_folder_input.md) — useFolderConfig/FolderPathInput contract; mockFetch can't do GET/POST-divergent sequences, stub fetch locally instead.
+- [Frontend 3D graph gotchas](project_frontend_graph3d.md) — jsdom has no WebGL: error-boundary/fetch-catch load-bearing; GraphView extension seams incl. Round 3's graphCameraControls ref, highlight-sprite workaround, chat-message queryId gap.
+- [Frontend integration/E2E findings](project_frontend_integration_e2e.md) — Playwright can't launch (no sudo, missing libglib); backend's free OpenRouter models return empty content/no embeddings for real prompts (verified not a network issue). SHIPPED = gate green, E2E deferred.

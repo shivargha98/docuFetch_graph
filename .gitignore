@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# docuFetch Graph backend runtime-generated data (graph_store/hash_store/chroma default paths)
+/graph_store.json
+/hash_store.json
+/chroma_db/
+
 # C extensions
 *.so
 
