@@ -62,8 +62,13 @@ def embed_text(text: str) -> list[float]:
     corrupting similarity search, whereas the caller (vector_store) can
     catch this per-chunk and simply skip storing that chunk's embedding,
     matching the ingestion pipeline's existing per-chunk resilience pattern.
+
+    encoding_format="float" is required: without it the openai SDK silently
+    requests base64-encoded embeddings, which OpenRouter's embed endpoint
+    doesn't honor for this model — the response comes back with no data and
+    the SDK raises ValueError("No embedding data received").
     """
-    completion = _client.embeddings.create(model=OPENROUTER_EMBED_MODEL, input=text)
+    completion = _client.embeddings.create(model=OPENROUTER_EMBED_MODEL, input=text, encoding_format="float")
     return completion.data[0].embedding
 
 
