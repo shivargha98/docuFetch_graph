@@ -109,9 +109,23 @@ ruff format .
 
 ## Running the Application
 
-Start the backend + frontend with:
+Two processes: the FastAPI backend on port 8000, and the Vite dev server for the frontend (which proxies `/api` and `/ws` to port 8000 — see `frontend/vite.config.ts`).
 
 ```bash
-uvicorn server:app --port 8000 --reload 
+# 1. Backend (from the repo root; venv must have requirements installed)
+#    On the Windows host: .venv\Scripts\activate first (created via `uv sync`)
+#    In the container: use ~/venv/bin/python3 -m uvicorn ...
+uvicorn backend.main:app --port 8000 --reload
+
+# 2. Frontend (separate terminal)
+cd frontend
+npm install   # first time only
+npm run dev   # serves on http://localhost:5173
 ```
+
+Open http://localhost:5173. Requires `.env` in the repo root (see `.env.example`): OpenRouter + Anthropic API keys, model ids, and `WATCH_FOLDER` as the default ingest folder (changeable from the UI). First ingestion of a folder is slow with free-tier reasoning models (one LLM call per chunk plus entity-resolution calls).
 *Keep on adding required information, gotchas for the project*
+
+## Gotchas
+
+- **`/workspace/.venv` belongs to the Windows host (D:\docuFetch_graph), not the container.** The workspace is a Windows folder mounted into the Linux container; a venv cannot be shared across the two OSes (incompatible binaries/layouts, and Windows can't delete Linux symlinks like `lib64`). Inside the container, use `~/venv` (`/home/claude/venv`) for Python work and never create or modify `/workspace/.venv`. On the host, `uv sync` (pyproject.toml carries the dependency list) owns `.venv`.
