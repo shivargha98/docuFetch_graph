@@ -30,4 +30,10 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL")
 # Issue 1, defined here now so config.py has a single owner for all tunables.
 ENTITY_RESOLUTION_MERGE_THRESHOLD = float(os.getenv("ENTITY_RESOLUTION_MERGE_THRESHOLD", "0.90"))
 ENTITY_RESOLUTION_AMBIGUOUS_LOW = float(os.getenv("ENTITY_RESOLUTION_AMBIGUOUS_LOW", "0.75"))
-NO_MATCH_SIMILARITY_CUTOFF = float(os.getenv("NO_MATCH_SIMILARITY_CUTOFF", "0.35"))
+# Chroma squared-L2 distance over unit-normalized embeddings (= 2 - 2*cos_sim,
+# range 0-4, lower = more similar). Tuned empirically against the live
+# OPENROUTER_EMBED_MODEL: relevant queries scored 0.79-0.88, irrelevant ones
+# 1.81-1.87, so 1.35 sits at the midpoint of the separation band (~cos_sim
+# >= 0.325). The earlier 0.35 placeholder required cos_sim >= 0.825 and
+# rejected everything.
+NO_MATCH_SIMILARITY_CUTOFF = float(os.getenv("NO_MATCH_SIMILARITY_CUTOFF", "1.35"))
