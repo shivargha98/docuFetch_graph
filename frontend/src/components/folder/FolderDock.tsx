@@ -113,17 +113,35 @@ export function FolderDock() {
     }
   }
 
-  /** Submits a browsed server path, closes the modal, and arms the "linked" mode. */
-  function handleBrowseSelect(path: string) {
+  /**
+   * Submits a browsed server path, closing the modal and arming the "linked"
+   * mode. On success, commits the mode/collapse/error-clear directly (same
+   * pattern as handleUpload): success is the signal, covering first
+   * selections from an empty boot and re-selects of the current folder,
+   * neither of which produces the folderPath change the effect above needs.
+   */
+  async function handleBrowseSelect(path: string) {
     setBrowseOpen(false);
     pendingModeRef.current = "linked";
-    void submit(path);
+    const succeeded = await submit(path);
+    if (succeeded) {
+      pendingModeRef.current = null;
+      setMode("linked");
+      setFlowError(null);
+      setOpen(false);
+    }
   }
 
   return (
     <div
       data-testid="folder-dock"
-      className="glass-panel fixed left-4 top-4 z-30 flex w-80 max-w-[calc(100vw-2rem)] flex-col rounded-xl shadow-glow-soft"
+      className={cn(
+        "glass-panel fixed left-4 top-4 z-30 flex max-w-[calc(100vw-2rem)] flex-col rounded-xl shadow-glow-soft",
+        // Collapsed: the bar sizes to its content so the folder name isn't
+        // ellipsized (truncate below only kicks in at the viewport cap).
+        // Expanded: fixed card width for the drop zone / controls.
+        open ? "w-96" : "w-fit"
+      )}
     >
       <button
         type="button"

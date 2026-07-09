@@ -40,6 +40,25 @@ function renderFolderConfig() {
 }
 
 describe("useFolderConfig", () => {
+  it("leaves folderPath null when the prefill reports no active folder (path: null)", async () => {
+    /**
+     * Given a fresh backend with no folder ever selected (GET returns
+     * {path: null} — the backend no longer defaults to a WATCH_FOLDER),
+     * when the prefill resolves,
+     * then folderPath stays null and no "watching" status is claimed, so
+     * the UI shows its folder chooser instead of a folder nobody chose.
+     */
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, { path: null }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderFolderConfig();
+
+    await waitFor(() => expect(result.current.folder.submitting).toBe(false));
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result.current.ingestion.state.folderPath).toBeNull();
+    expect(result.current.ingestion.state.status).toEqual({ state: "idle" });
+  });
+
   it("submits a valid folder path and clears prior error state", async () => {
     /**
      * Given a prior inline error is set, and fetch is mocked to return a success

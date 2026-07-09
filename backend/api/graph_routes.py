@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 import backend.config as config
+from backend.api import config_routes
 from backend.graph_store.store import GraphStore
 
 router = APIRouter()
@@ -17,10 +18,13 @@ router = APIRouter()
 def get_graph() -> dict:
     """
     Load the graph currently persisted at config.GRAPH_STORE_PATH and return
-    it as {"nodes": [...], "edges": [...]}. If no graph has been persisted
-    yet (no ingestion has run), return an empty graph payload instead of
-    raising an error.
+    it as {"nodes": [...], "edges": [...]}. Returns an empty payload when no
+    graph has been persisted yet (no ingestion has run) — or when no folder
+    is actively selected: graph data on disk belongs to a previous session's
+    folder, and must not render as if something were being watched.
     """
+    if config_routes.get_active_folder() is None:
+        return {"nodes": [], "edges": []}
     try:
         store = GraphStore.load(Path(config.GRAPH_STORE_PATH))
     except FileNotFoundError:

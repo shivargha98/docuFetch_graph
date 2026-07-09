@@ -219,7 +219,7 @@ def mock_extraction_llm(monkeypatch):
 @pytest.fixture
 def mock_embedding_client(monkeypatch):
     """
-    Provide a mocked OpenRouter embedding client (`OPENROUTER_EMBED_MODEL`)
+    Provide a mocked embedding client (`GEMINI_EMBED_MODEL`, Gemini)
     whose returned vectors can be configured per-test to produce controlled
     similarity scores between concepts/chunks.
 

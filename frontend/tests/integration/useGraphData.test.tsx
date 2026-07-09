@@ -7,7 +7,7 @@
  * illustrative and provisional, pending backend Issue 16 (including how/whether
  * pagination is handled for large graphs).
  *
- * jsdom has no WebGL, so react-force-graph-3d cannot actually render here. It
+ * the canvas renderer isn't exercised in jsdom, so react-force-graph-2d cannot actually render here. It
  * is mocked with a lightweight stand-in that records whatever `graphData` and
  * link-accessor props (linkColor, linkWidth, etc.) GraphView passes down --
  * that recorded value is what these tests assert against. Later rounds
@@ -15,9 +15,10 @@
  * pattern for their own GraphView-rendering tests.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { useEffect } from "react";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import { mockFetch, resetAllMocks } from "../setup";
-import { AppProviders } from "../../src/state/providers";
+import { AppProviders, useIngestionState } from "../../src/state/providers";
 import { GraphView } from "../../src/components/graph/GraphView";
 import { relationTypeToEdgeStyle } from "../../src/lib/edgeStyles";
 import type { GraphNode, GraphEdge } from "../../src/state/types";
@@ -33,7 +34,18 @@ interface CapturedProps {
 
 let capturedProps: CapturedProps | null = null;
 
-vi.mock("react-force-graph-3d", () => ({
+/** Seeds an active folder so GraphView's folder-gated graph fetch runs (no folder -> no graph). */
+function FolderSeed() {
+  const { dispatch } = useIngestionState();
+  useEffect(() => {
+    dispatch({ type: "RESET_FOLDER", folderPath: "/docs" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
+
+vi.mock("react-force-graph-2d", () => ({
   default: (props: CapturedProps) => {
     capturedProps = props;
     return null;
@@ -72,6 +84,7 @@ describe("useGraphData", () => {
 
     render(
       <AppProviders>
+        <FolderSeed />
         <GraphView />
       </AppProviders>,
     );
@@ -92,6 +105,7 @@ describe("useGraphData", () => {
 
     render(
       <AppProviders>
+        <FolderSeed />
         <GraphView />
       </AppProviders>,
     );

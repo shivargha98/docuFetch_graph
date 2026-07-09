@@ -1,88 +1,48 @@
 /**
- * Central 3D concept-graph scene: fetches (via useGraphData) and renders the
- * active folder's graph as an orbit-able WebGL scene using
- * react-force-graph-3d. Concept nodes render as glowing ion-colored orbs
- * (see ./nodeGlow); edges render with a color/width/particle-flow treatment
- * derived from their relation-type label (see ../../lib/edgeStyles), so
+ * Central concept-graph scene: fetches (via useGraphData) and renders the
+ * active folder's graph as a pannable/zoomable 2D canvas constellation using
+ * react-force-graph-2d. Concept nodes render as glowing ion discs (radial-
+ * gradient halo + core, drawn per node in nodeCanvasObject); edges keep the
+ * relation-type color/width/particle treatment (../../lib/edgeStyles), so
  * distinct relation types read as visually distinct connections at a glance.
- * Camera orbit/zoom/pan use ForceGraph3D's built-in trackball controls,
- * enabled by default and not overridden here.
  *
- * The real canvas requires WebGL, which jsdom (every test in this suite) and
- * a small minority of real browsers don't provide -- GraphSceneErrorBoundary
- * catches that failure and swaps in a themed fallback message instead of
- * crashing the app shell.
- *
- * Extension points for later rounds -- extend these seams, don't rewrite them:
- * - `fgRef.current` exposes ForceGraph3D's imperative methods (cameraPosition,
- *   zoomToFit, emitParticle, scene(), etc.).
- * - `graphData` is centralized as a single memoized object below; Round 4
- *   fade-in state should add accessor props alongside the ones already wired
- *   here, rather than restructuring the <ForceGraph3D> element.
- * - `handleNodeClick` is a deliberate no-op seam -- Round 4 (Issue 8) wires it
- *   to open the node-detail HUD overlay (dispatch a `selectedNodeId` update).
- *
- * Round 3 (Issue 10) additions, both purely additive extensions of the seams
- * above -- neither restructures the <ForceGraph3D> element nor touches
- * nodeGlow.ts (frozen):
- * - `graphCameraControls` (module-level ref, exported below) is the seam
- *   `useTraversalSync` (which lives outside this component's tree, watching
- *   chat state) uses to drive camera-follow through `fgRef` without this
- *   component needing to know anything about traversal/chat state itself.
- * - `linkColor`/`linkWidth` now also check `state.highlightedEdgeIds` (built
- *   from `edgeHighlightKey`, also exported below) to render the traversed
- *   edge trail in the synapse accent. Node highlighting can't route through
- *   `nodeThreeObject` (buildNodeGlowObject ignores its node argument and
- *   nodeGlow.ts is frozen), so visited nodes instead get a small additive
- *   sprite halo added directly to the scene via `fgRef`, mirroring the same
- *   imperative-scene-mutation pattern already used for the fog effect below.
- *
- * Round 4 (Issues 7-8) additions:
- * - Issue 7 (live node fade-in): `useNodeFadeIn` polls for newly-ingested
- *   nodes/edges and returns `fadeMapRef` (node id -> first-seen timestamp).
- *   Since `nodeGlow.ts`'s core/halo materials are shared across every node
- *   instance (frozen, can't be made per-node), per-node opacity fade isn't
- *   available -- instead the `nodePositionUpdate` accessor (called once per
- *   node per rendered frame by the underlying force-graph engine, and which
- *   already fires for every graphData change since the library auto-reheats
- *   on data change) scales each still-fading node's glow Group up from
- *   near-zero with an ease-out-back curve, reading as an energetic
- *   "materialization" pop rather than a plain linear grow-in.
- * - Issue 8 (node-detail HUD): `handleNodeClick` now dispatches `SELECT_NODE`
- *   (toggling to null on a re-click of the same node) instead of being a
- *   no-op. `reprojectNodeToScreen` (exported, pure) computes the selected
- *   node's live 2D screen position via `ForceGraphMethods.graph2ScreenCoords`
- *   (confirmed present on the installed react-force-graph-3d version's
- *   `ForceGraphMethods` interface -- see node_modules/react-force-graph-3d/
- *   dist/react-force-graph-3d.d.ts); the `onEngineTick` prop (also confirmed
- *   present, fired every rendered frame) recomputes it continuously while an
- *   overlay is open, so `<NodeDetailOverlay>` stays anchored without drift
- *   as the camera orbits/zooms. Rendered as a sibling of
- *   `GraphSceneErrorBoundary` (not inside it) since the overlay is plain
- *   DOM/CSS with no WebGL dependency.
- *
- * Folder-selection rework (Task 9) addition: while `state.generating` is set
- * (a genuine folder switch/upload kicked off ingestion), `<GeneratingOverlay>`
- * renders over the scene (same plain-DOM sibling pattern as
- * NodeDetailOverlay) with the live node count, and `useGeneratingStatus()` --
- * called here since the center pane never unmounts -- polls
- * /api/ingest-status to clear the flag when the backend goes idle. The
- * empty-state hint is suppressed while generating so the two messages never
- * stack.
+ * 2D REWRITE (2026-07-10, user request — WebGL/three.js rendered too slowly
+ * on their laptop; spec: docs/superpowers/specs/2026-07-10-graph-2d-design.md).
+ * Every behavior decision from the 3D era carries over:
+ * - Settle-then-freeze stillness: onEngineStop pins every node (fx/fy) —
+ *   pinned nodes are immovable to d3, so nothing ever drifts on its own.
+ *   Nodes added during ingestion stay unpinned until the next cool-down.
+ * - Compact layout: weak charge, short links, gentle forceX/forceY pull
+ *   toward the origin so disconnected clusters stay gathered.
+ * - NO auto camera motion: the view opens at the library default (zoom 1,
+ *   centered on the origin — the compact layout fits typical viewports) and
+ *   only moves via user pan/wheel and the +/− zoom buttons (fg.zoom, 300ms).
+ * - Hover-only labels: exactly the hovered node's name is painted under its
+ *   glow (hoveredNodeIdRef; the canvas repaints on hover). No default
+ *   tooltip. Ellipsized past 24 chars — the full name lives in the HUD card.
+ * - Traversal highlights: visited nodes get synapse rings drawn in the same
+ *   canvas pass (latest hop brighter) — replaces the 3D sprite-halo system.
+ * - Materialize pop-in: still-fading nodes (useNodeFadeIn's fadeMap) scale
+ *   their radius along the ease-out-back curve.
+ * - Node-detail HUD: onNodeClick dispatches SELECT_NODE; the overlay is
+ *   anchored per frame via graph2ScreenCoords (reprojectNodeToScreen,
+ *   exported pure) from onEngineTick.
+ * - `graphCameraControls.focusNode` (useTraversalSync's camera-follow seam)
+ *   pans via centerAt(x, y, 800ms).
+ * - GeneratingOverlay banner + empty-state hint unchanged.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import ForceGraph3D, { type ForceGraphMethods, type NodeObject, type LinkObject } from "react-force-graph-3d";
-import * as THREE from "three";
+import ForceGraph2D, { type ForceGraphMethods, type NodeObject, type LinkObject } from "react-force-graph-2d";
+import { forceX, forceY } from "d3-force-3d";
 import { useGraphState } from "../../state/providers";
 import { useGraphData } from "../../hooks/useGraphData";
 import { useGeneratingStatus } from "../../hooks/useGeneratingStatus";
 import { useNodeFadeIn, FADE_DURATION_MS } from "../../hooks/useNodeFadeIn";
 import { relationTypeToEdgeStyle } from "../../lib/edgeStyles";
-import { buildNodeGlowObject } from "./nodeGlow";
 import { GraphSceneErrorBoundary } from "./GraphSceneErrorBoundary";
 import { GeneratingOverlay } from "./GeneratingOverlay";
 import { NodeDetailOverlay, type LinkedConcept } from "./NodeDetailOverlay";
-import { VOID, SYNAPSE } from "./sceneColors";
+import { ION, SYNAPSE, VOID } from "./sceneColors";
 import type { GraphNode, GraphEdge } from "../../state/types";
 
 interface GraphViewProps {
@@ -92,6 +52,11 @@ interface GraphViewProps {
 
 type SceneNode = NodeObject<GraphNode>;
 type SceneLink = LinkObject<GraphNode, GraphEdge>;
+
+/** Core disc radius (world units); the gradient halo extends to 3x this. */
+const NODE_RADIUS = 4;
+/** Names longer than this are ellipsized on the hover label (full name lives in the HUD card). */
+const LABEL_MAX_CHARS = 24;
 
 /** Shared positioning for the empty-state / fallback overlay text. */
 const OVERLAY_TEXT_CLASS =
@@ -112,7 +77,7 @@ function edgeEndpointId(endpoint: string | number | SceneNode | undefined): stri
 /**
  * Ease-out-back curve: overshoots past 1 before settling, so a node scaled
  * along this curve reads as an energetic "pop" materializing into the scene
- * rather than a flat linear grow-in (Issue 7 -- see nodePositionUpdate below).
+ * rather than a flat linear grow-in (see nodeCanvasObject below).
  */
 function easeOutBack(t: number): number {
   const c1 = 1.70158;
@@ -121,108 +86,38 @@ function easeOutBack(t: number): number {
 }
 
 /**
- * Pure reprojection helper (Issue 8): computes the 2D screen coordinates for
- * a node's live 3D position via the given ForceGraph instance's
+ * Pure reprojection helper: computes the 2D screen coordinates for a node's
+ * live canvas position via the given ForceGraph instance's
  * `graph2ScreenCoords` accessor. Returns null if the node's position isn't
- * known yet, or no ForceGraph instance is available (WebGL unavailable, or
- * not yet mounted) -- exported standalone so the reprojection math is
- * testable against a mocked camera-state input without mounting a real WebGL
- * scene.
+ * known yet, or no ForceGraph instance is available (not yet mounted) --
+ * exported standalone so the reprojection math is testable against a mocked
+ * camera-state input without mounting a real canvas scene.
  */
-/**
- * Pure camera-dolly math for the manual zoom buttons: returns the camera
- * position whose offset from `target` is the current offset scaled by
- * `factor` (< 1 zooms in, > 1 zooms out). Exported standalone so the zoom
- * behavior is testable without a real WebGL scene (same pattern as
- * reprojectNodeToScreen).
- */
-export function zoomedCameraPosition(
-  position: { x: number; y: number; z: number },
-  target: { x: number; y: number; z: number },
-  factor: number
-): { x: number; y: number; z: number } {
-  return {
-    x: target.x + (position.x - target.x) * factor,
-    y: target.y + (position.y - target.y) * factor,
-    z: target.z + (position.z - target.z) * factor,
-  };
-}
-
 export function reprojectNodeToScreen(
   fg: Pick<ForceGraphMethods<SceneNode, SceneLink>, "graph2ScreenCoords"> | undefined,
-  node: { x?: number; y?: number; z?: number } | undefined
+  node: { x?: number; y?: number } | undefined
 ): { x: number; y: number } | null {
-  if (!fg || !node || typeof node.x !== "number" || typeof node.y !== "number" || typeof node.z !== "number") {
+  if (!fg || !node || typeof node.x !== "number" || typeof node.y !== "number") {
     return null;
   }
-  const { x, y } = fg.graph2ScreenCoords(node.x, node.y, node.z);
+  const { x, y } = fg.graph2ScreenCoords(node.x, node.y);
   return { x, y };
 }
 
 /**
  * Imperative camera-follow seam for `useTraversalSync`: that hook watches chat
  * state, which lives outside this component's tree, so it has no other way to
- * reach ForceGraph3D's camera controls than through this module-level ref,
- * registered by the mounted GraphView instance (null while unmounted).
+ * reach the graph's camera than through this module-level ref, registered by
+ * the mounted GraphView instance (null while unmounted).
  */
 export interface GraphCameraControls {
-  /** Pans/zooms the camera toward the given node's current simulated position, if known. */
+  /** Pans the view toward the given node's current simulated position, if known. */
   focusNode(nodeId: string): void;
 }
 
 export const graphCameraControls: { current: GraphCameraControls | null } = { current: null };
 
-let highlightTexture: THREE.Texture | null = null;
-
-/**
- * Lazily builds (once) the radial-gradient canvas texture used for the
- * traversal-highlight halo sprite, the same soft-glow technique nodeGlow.ts
- * uses for node glow (duplicated here in miniature since nodeGlow.ts is
- * frozen and doesn't export its own texture).
- */
-function getHighlightTexture(): THREE.Texture {
-  if (highlightTexture) return highlightTexture;
-
-  const size = 128;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    gradient.addColorStop(0, "rgba(255,255,255,0.9)");
-    gradient.addColorStop(0.55, "rgba(255,255,255,0.25)");
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, size, size);
-  }
-
-  highlightTexture = new THREE.CanvasTexture(canvas);
-  return highlightTexture;
-}
-
-/**
- * Builds a synapse-colored sprite halo marking a visited node during a live
- * traversal. The most-recently-visited node gets a brighter, larger halo than
- * earlier nodes in the same trail, so the trail reads as a path with a clear
- * "current position" rather than a flat set of equally-weighted marks.
- */
-function buildHighlightSprite(isLatest: boolean): THREE.Sprite {
-  const material = new THREE.SpriteMaterial({
-    map: getHighlightTexture(),
-    color: SYNAPSE,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    opacity: isLatest ? 0.95 : 0.35,
-  });
-  const sprite = new THREE.Sprite(material);
-  const scale = isLatest ? 34 : 26;
-  sprite.scale.set(scale, scale, 1);
-  return sprite;
-}
-
-/** Renders the 3D concept-graph scene with a stable `graph-view` test id. */
+/** Renders the 2D concept-graph scene with a stable `graph-view` test id. */
 export function GraphView({ className }: GraphViewProps) {
   useGraphData();
   useGeneratingStatus();
@@ -233,7 +128,7 @@ export function GraphView({ className }: GraphViewProps) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [overlayScreenPos, setOverlayScreenPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Size the canvas to the container -- ForceGraph3D defaults to the window
+  // Size the canvas to the container -- the library defaults to the window
   // size, not its parent's, if width/height aren't supplied. Guarded for
   // jsdom (no ResizeObserver) so this effect is a no-op under vitest.
   useEffect(() => {
@@ -246,36 +141,19 @@ export function GraphView({ className }: GraphViewProps) {
     return () => observer.disconnect();
   }, []);
 
-  // Atmosphere: a soft exponential fog matching the void background, so
-  // distant nodes recede into the scene instead of popping against a flat
-  // backdrop. No bloom/postprocessing pipeline is installed this round --
-  // node/edge glow is faked via nodeGlow.ts and additive-blended materials.
-  // Density is tuned to the library's auto camera distance (z = cbrt(N)*170,
-  // i.e. 500-800 units for a real graph): FogExp2 attenuates by
-  // e^-(d*density)^2, so 0.0005 leaves ~85% brightness at 800 units and ~60%
-  // at 1500. The original 0.018 fogged everything past ~100 units to pure
-  // void -- an invisible graph on the first real ingestion.
-  useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    fg.scene().fog = new THREE.FogExp2(new THREE.Color(VOID).getHex(), 0.0005);
-  }, []);
-
   const graphData = useMemo(() => ({ nodes: state.nodes, links: state.edges }), [state.nodes, state.edges]);
 
-  // Mirrors the latest graphData into a ref so the camera-follow seam below
-  // (called from outside this component's render cycle, by useTraversalSync)
-  // always reads the current node list -- including x/y/z, which the force
-  // simulation mutates on the same node objects in place, outside React
-  // state. Cast to SceneNode: these are the exact objects react-force-graph-3d
-  // annotates with x/y/z at runtime, which GraphNode's own type doesn't model.
+  // Mirrors the latest graphData into a ref so imperative callbacks (camera
+  // follow, reprojection, pinning) always read the current node list --
+  // including x/y, which the force simulation mutates on the same node
+  // objects in place, outside React state.
   const graphDataRef = useRef(graphData as { nodes: SceneNode[]; links: SceneLink[] });
   graphDataRef.current = graphData as { nodes: SceneNode[]; links: SceneLink[] };
 
-  // Node-detail HUD overlay state (Issue 8): the selected node's data and its
-  // linked concepts (other nodes reachable via a direct edge, resolved by id
-  // to their display name) are derived from graph state whenever the
-  // selection or graph data changes.
+  // Node-detail HUD overlay state: the selected node's data and its linked
+  // concepts (other nodes reachable via a direct edge, resolved by id to
+  // their display name) are derived from graph state whenever the selection
+  // or graph data changes.
   const selectedNode = useMemo(
     () => (state.selectedNodeId ? (state.nodes.find((n) => n.id === state.selectedNodeId) ?? null) : null),
     [state.selectedNodeId, state.nodes]
@@ -307,43 +185,125 @@ export function GraphView({ className }: GraphViewProps) {
     setOverlayScreenPos(null);
   }, [state.selectedNodeId]);
 
-  // Auto-framing (user request, 2026-07-09): frame the whole graph ONCE per
-  // load, on the first engine cool-down with nodes present, so it never
-  // opens half out of view. Deliberately never re-fits after that (the
-  // original fit-while-generating follow-along read as constant unwanted
-  // zooming) — from then on the camera belongs to the user, via orbit
-  // controls and the zoom buttons below. Re-armed whenever the graph
-  // empties (folder switch/reset).
-  const hasAutoFramedRef = useRef(false);
+  // Compact layout: weaker repulsion + shorter links + gentle positional
+  // forces toward the origin. The positional forces keep DISCONNECTED
+  // clusters gathered into one compact constellation — with pure charge
+  // repulsion and no links between components, they otherwise fling each
+  // other apart. Applied once; d3 keeps these across re-heats.
   useEffect(() => {
-    if (state.nodes.length === 0) hasAutoFramedRef.current = false;
-  }, [state.nodes.length]);
+    const fg = fgRef.current;
+    if (!fg) return;
+    (fg.d3Force("charge") as { strength?: (s: number) => void } | undefined)?.strength?.(-12);
+    (fg.d3Force("link") as { distance?: (d: number) => void } | undefined)?.distance?.(22);
+    fg.d3Force("x", forceX(0).strength(0.08));
+    fg.d3Force("y", forceY(0).strength(0.08));
+  }, []);
 
-  /** Fits the settled graph into view, once per load. */
+  /**
+   * Settle-then-freeze (stillness as a guarantee): when the simulation
+   * cools, pin every node at its settled position — pinned nodes are
+   * immovable to d3, so no future re-heat (data ticks during ingestion,
+   * accessor churn, anything) can ever move the settled constellation.
+   * Nodes added later start unpinned, drift into place around the frozen
+   * ones, and freeze on the next cool-down. A folder reset creates fresh
+   * unpinned node objects, so a new graph still lays out normally.
+   */
   function handleEngineStop() {
-    if (state.nodes.length === 0 || hasAutoFramedRef.current) return;
-    fgRef.current?.zoomToFit(600, 60);
-    hasAutoFramedRef.current = true;
+    for (const node of graphDataRef.current.nodes) {
+      node.fx = node.x;
+      node.fy = node.y;
+    }
+  }
+
+  // Hovered node (ref, not state — read inside the canvas paint pass, and
+  // the library repaints on hover changes): only the hovered node's name is
+  // painted. Labels are HOVER-ONLY at every zoom level.
+  const hoveredNodeIdRef = useRef<string | null>(null);
+
+  // Highlight state mirrored into a ref for the canvas paint closures.
+  const highlightedNodeIdsRef = useRef<string[]>(state.highlightedNodeIds);
+  highlightedNodeIdsRef.current = state.highlightedNodeIds;
+
+  /**
+   * Paints one concept node: radial-gradient ion halo + core disc, a synapse
+   * highlight ring while the node is on the live traversal trail (latest hop
+   * brighter), the materialization pop for still-fading nodes, and — for the
+   * hovered node only — its name beneath the glow.
+   */
+  function paintNode(node: SceneNode, ctx: CanvasRenderingContext2D, globalScale: number) {
+    if (typeof node.x !== "number" || typeof node.y !== "number") return;
+    const nodeId = String(node.id ?? "");
+
+    const addedAt = fadeMapRef.current.get(nodeId);
+    const pop = addedAt != null ? easeOutBack(Math.min((Date.now() - addedAt) / FADE_DURATION_MS, 1)) : 1;
+    const r = Math.max(0.1, NODE_RADIUS * pop);
+
+    const gradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, r * 3);
+    gradient.addColorStop(0, "rgba(110, 231, 249, 0.85)");
+    gradient.addColorStop(0.4, "rgba(110, 231, 249, 0.25)");
+    gradient.addColorStop(1, "rgba(110, 231, 249, 0)");
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, r * 3, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.fillStyle = ION;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+
+    const trail = highlightedNodeIdsRef.current;
+    const trailIndex = trail.indexOf(nodeId);
+    if (trailIndex !== -1) {
+      const isLatest = trailIndex === trail.length - 1;
+      ctx.strokeStyle = SYNAPSE;
+      ctx.globalAlpha = isLatest ? 0.95 : 0.4;
+      ctx.lineWidth = (isLatest ? 2 : 1.2) / globalScale;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r * (isLatest ? 3 : 2.4), 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    if (nodeId === hoveredNodeIdRef.current) {
+      const name = node.name ?? "";
+      const text = name.length > LABEL_MAX_CHARS ? `${name.slice(0, LABEL_MAX_CHARS - 1)}…` : name;
+      const fontSize = Math.max(12 / globalScale, 3);
+      ctx.font = `${fontSize}px "IBM Plex Mono", ui-monospace, monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      // Backing plate so the label stays legible over edges/glow.
+      const width = ctx.measureText(text).width;
+      ctx.fillStyle = "rgba(7, 8, 18, 0.75)";
+      ctx.fillRect(node.x - width / 2 - 2, node.y + r * 3 + 1, width + 4, fontSize + 3);
+      ctx.fillStyle = "rgba(231, 236, 245, 0.95)";
+      ctx.fillText(text, node.x, node.y + r * 3 + 2.5);
+    }
+  }
+
+  /** Generous circular pointer hitbox so small zoomed-out nodes hover easily. */
+  function paintPointerArea(node: SceneNode, color: string, ctx: CanvasRenderingContext2D) {
+    if (typeof node.x !== "number" || typeof node.y !== "number") return;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, NODE_RADIUS * 3, 0, 2 * Math.PI);
+    ctx.fill();
   }
 
   /**
-   * Dollies the camera toward (factor < 1) or away from (factor > 1) the
-   * orbit target by scaling its offset — the manual zoom behind the +/−
-   * buttons in the viewport's top-right corner.
+   * Zooms the canvas view by the given factor (>1 zooms in) with a short
+   * glide — the manual zoom behind the +/− buttons in the viewport's
+   * top-right corner.
    */
   function zoomBy(factor: number) {
     const fg = fgRef.current;
     if (!fg) return;
-    const controls = fg.controls() as { target?: THREE.Vector3 };
-    const target = controls.target ?? new THREE.Vector3(0, 0, 0);
-    const next = zoomedCameraPosition(fg.camera().position, target, factor);
-    fg.cameraPosition(next, { x: target.x, y: target.y, z: target.z }, 300);
+    fg.zoom(fg.zoom() * factor, 300);
   }
 
-  // Per-frame reprojection (Issue 8): recomputes the selected node's 2D
-  // screen position on every rendered frame (ForceGraph3D's onEngineTick
-  // fires once per frame -- see file header comment), so the HUD overlay
-  // tracks the node without drift as the camera orbits/zooms. A no-op
+  // Per-frame reprojection: recomputes the selected node's 2D screen
+  // position (onEngineTick fires once per rendered frame), so the HUD
+  // overlay tracks the node without drift as the view pans/zooms. A no-op
   // whenever no node is selected.
   function handleEngineTick() {
     if (!state.selectedNodeId) return;
@@ -352,31 +312,16 @@ export function GraphView({ className }: GraphViewProps) {
     setOverlayScreenPos((prev) => (prev && next && prev.x === next.x && prev.y === next.y ? prev : next));
   }
 
-  // Registers the imperative camera-follow seam for useTraversalSync (Issue
-  // 10) for as long as this component is mounted.
+  // Registers the imperative camera-follow seam for useTraversalSync for as
+  // long as this component is mounted.
   useEffect(() => {
     graphCameraControls.current = {
       focusNode(nodeId: string) {
         const fg = fgRef.current;
         if (!fg) return;
         const node = graphDataRef.current.nodes.find((n) => n.id === nodeId);
-        if (!node || typeof node.x !== "number" || typeof node.y !== "number" || typeof node.z !== "number") return;
-
-        // Standard react-force-graph "fly to node" recipe: place the camera
-        // further out along the same vector from the origin through the
-        // node, looking at the node itself. cameraPosition's transitionMs
-        // arg drives the library's own tweened camera move.
-        const distance = 120;
-        const nodeDistance = Math.hypot(node.x, node.y, node.z);
-        const camPos =
-          nodeDistance === 0
-            ? { x: node.x, y: node.y, z: node.z + distance }
-            : (() => {
-                const ratio = 1 + distance / nodeDistance;
-                return { x: node.x * ratio, y: node.y * ratio, z: node.z * ratio };
-              })();
-
-        fg.cameraPosition(camPos, { x: node.x, y: node.y, z: node.z }, 800);
+        if (!node || typeof node.x !== "number" || typeof node.y !== "number") return;
+        fg.centerAt(node.x, node.y, 800);
       },
     };
     return () => {
@@ -384,76 +329,13 @@ export function GraphView({ className }: GraphViewProps) {
     };
   }, []);
 
-  // Visualizes the live traversal highlight trail (Issue 10): adds a
-  // synapse-colored halo sprite directly to the scene for each newly
-  // highlighted node (can't route through nodeThreeObject -- see file header
-  // comment), and removes any sprites for ids no longer in the trail (e.g.
-  // after CLEAR_HIGHLIGHT). The most-recent id gets the brighter halo.
-  const highlightSpritesRef = useRef(new Map<string, THREE.Sprite>());
-  useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    const scene = fg.scene();
-    const currentIds = new Set(state.highlightedNodeIds);
-
-    for (const [nodeId, sprite] of highlightSpritesRef.current) {
-      if (!currentIds.has(nodeId)) {
-        scene.remove(sprite);
-        sprite.material.dispose();
-        highlightSpritesRef.current.delete(nodeId);
-      }
-    }
-
-    state.highlightedNodeIds.forEach((nodeId, index) => {
-      const isLatest = index === state.highlightedNodeIds.length - 1;
-      const existing = highlightSpritesRef.current.get(nodeId);
-      if (existing) {
-        existing.material.opacity = isLatest ? 0.95 : 0.35;
-        return;
-      }
-      const node = graphDataRef.current.nodes.find((n) => n.id === nodeId);
-      if (!node || typeof node.x !== "number" || typeof node.y !== "number" || typeof node.z !== "number") return;
-      const sprite = buildHighlightSprite(isLatest);
-      sprite.position.set(node.x, node.y, node.z);
-      scene.add(sprite);
-      highlightSpritesRef.current.set(nodeId, sprite);
-    });
-  }, [state.highlightedNodeIds]);
-
-  // Cleans up any remaining highlight sprites on unmount.
-  useEffect(() => {
-    return () => {
-      const scene = fgRef.current?.scene();
-      for (const sprite of highlightSpritesRef.current.values()) {
-        scene?.remove(sprite);
-        sprite.material.dispose();
-      }
-      highlightSpritesRef.current.clear();
-    };
-  }, []);
-
   /**
-   * Opens the node-detail HUD overlay for the clicked node (Issue 8), or
-   * dismisses it if the same node is clicked again while already selected.
+   * Opens the node-detail HUD overlay for the clicked node, or dismisses it
+   * if the same node is clicked again while already selected.
    */
   function handleNodeClick(node: SceneNode) {
     const nodeId = String(node.id ?? "");
     dispatch({ type: "SELECT_NODE", nodeId: state.selectedNodeId === nodeId ? null : nodeId });
-  }
-
-  /**
-   * Animates a still-fading node's glow Group scale along an ease-out-back
-   * curve (Issue 7), reading as a "materialization" pop rather than a linear
-   * grow-in. Returns false (falsy) so the library's default position
-   * assignment for this node still applies -- this accessor only touches
-   * scale, never position.
-   */
-  function handleNodePositionUpdate(obj: THREE.Object3D, _coords: unknown, node: NodeObject) {
-    const addedAt = fadeMapRef.current.get(String(node.id ?? ""));
-    const progress =
-      addedAt != null ? easeOutBack(Math.min((Date.now() - addedAt) / FADE_DURATION_MS, 1)) : 1;
-    obj.scale.setScalar(progress);
-    return false;
   }
 
   return (
@@ -463,22 +345,23 @@ export function GraphView({ className }: GraphViewProps) {
       className={`glass-panel flex-1 min-h-[320px] rounded-xl shadow-glow-soft relative overflow-hidden ${className ?? ""}`}
     >
       <GraphSceneErrorBoundary
-        fallback={<p className={OVERLAY_TEXT_CLASS}>3D graph rendering isn't available in this browser.</p>}
+        fallback={<p className={OVERLAY_TEXT_CLASS}>Graph rendering isn't available in this browser.</p>}
       >
         {state.nodes.length === 0 && !state.generating && (
           <p className={OVERLAY_TEXT_CLASS}>No graph loaded yet — drop a folder to begin.</p>
         )}
-        <ForceGraph3D
+        <ForceGraph2D
           ref={fgRef}
           graphData={graphData}
           width={size.width || undefined}
           height={size.height || undefined}
           backgroundColor={VOID}
-          showNavInfo={false}
-          nodeLabel={(node) => node.name}
-          nodeThreeObject={buildNodeGlowObject}
-          nodeThreeObjectExtend={false}
-          nodePositionUpdate={handleNodePositionUpdate}
+          nodeLabel={() => ""}
+          onNodeHover={(node) => {
+            hoveredNodeIdRef.current = node ? String(node.id ?? "") : null;
+          }}
+          nodeCanvasObject={paintNode}
+          nodePointerAreaPaint={paintPointerArea}
           onEngineTick={handleEngineTick}
           onEngineStop={handleEngineStop}
           linkColor={(link) =>
@@ -502,7 +385,7 @@ export function GraphView({ className }: GraphViewProps) {
           type="button"
           aria-label="Zoom in"
           data-testid="graph-zoom-in"
-          onClick={() => zoomBy(1 / 1.4)}
+          onClick={() => zoomBy(1.4)}
           className="glass-panel h-8 w-8 rounded-md font-mono text-base leading-none text-text-secondary transition-colors hover:border-ion hover:text-ion"
         >
           +
@@ -511,7 +394,7 @@ export function GraphView({ className }: GraphViewProps) {
           type="button"
           aria-label="Zoom out"
           data-testid="graph-zoom-out"
-          onClick={() => zoomBy(1.4)}
+          onClick={() => zoomBy(1 / 1.4)}
           className="glass-panel h-8 w-8 rounded-md font-mono text-base leading-none text-text-secondary transition-colors hover:border-ion hover:text-ion"
         >
           −

@@ -5,16 +5,17 @@
  * in tests/unit/NodeDetailOverlay.test.tsx.
  * Source: Feature: Node Click HUD Detail Overlay (docs/frontend/features.md), Issue 8.
  *
- * Uses the same `vi.mock("react-force-graph-3d", ...)` capture-props pattern
+ * Uses the same `vi.mock("react-force-graph-2d", ...)` capture-props pattern
  * documented by the graph3d/traversal worker reports: the mock never invokes
  * the `ref` callback prop, so `fgRef.current` stays undefined here exactly as
  * it does under every other GraphView test in this suite -- `onNodeClick` is
  * instead invoked directly from the captured props to simulate a real click.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { useEffect } from "react";
 import { render, screen, cleanup, waitFor, fireEvent, act } from "@testing-library/react";
 import { mockFetch, resetAllMocks } from "../setup";
-import { AppProviders, useGraphState } from "../../src/state/providers";
+import { AppProviders, useGraphState, useIngestionState } from "../../src/state/providers";
 import { GraphView, reprojectNodeToScreen } from "../../src/components/graph/GraphView";
 import type { GraphState } from "../../src/state/types";
 
@@ -24,7 +25,7 @@ interface CapturedProps {
 
 let capturedProps: CapturedProps | undefined;
 
-vi.mock("react-force-graph-3d", () => ({
+vi.mock("react-force-graph-2d", () => ({
   default: (props: CapturedProps) => {
     capturedProps = props;
     return null;
@@ -51,6 +52,17 @@ function graphResponse() {
   };
 }
 
+
+/** Seeds an active folder so GraphView's folder-gated graph fetch runs (no folder -> no graph). */
+function FolderSeed() {
+  const { dispatch } = useIngestionState();
+  useEffect(() => {
+    dispatch({ type: "RESET_FOLDER", folderPath: "/docs" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
 /** Mounts GraphView and exposes live graph state via a ref, for the test to assert on directly. */
 function Harness({ apiRef }: { apiRef: { current: GraphState | null } }) {
   const { state } = useGraphState();
@@ -72,6 +84,7 @@ describe("NodeDetailOverlayInteraction", () => {
 
     render(
       <AppProviders>
+        <FolderSeed />
         <Harness apiRef={apiRef} />
       </AppProviders>
     );
@@ -105,14 +118,14 @@ describe("NodeDetailOverlayInteraction", () => {
      * `reprojectNodeToScreen` is the exact pure function GraphView calls from
      * its `onEngineTick` handler on every rendered frame.
      */
-    const node = { x: 10, y: 20, z: 30 };
+    const node = { x: 10, y: 20 };
 
-    const cameraStateA = { graph2ScreenCoords: () => ({ x: 120, y: 80, z: 0.5 }) };
+    const cameraStateA = { graph2ScreenCoords: () => ({ x: 120, y: 80 }) };
     expect(reprojectNodeToScreen(cameraStateA, node)).toEqual({ x: 120, y: 80 });
 
     // Simulates the camera having orbited/zoomed: the same node now
     // reprojects to a different screen position.
-    const cameraStateB = { graph2ScreenCoords: () => ({ x: 340, y: 210, z: 0.9 }) };
+    const cameraStateB = { graph2ScreenCoords: () => ({ x: 340, y: 210 }) };
     expect(reprojectNodeToScreen(cameraStateB, node)).toEqual({ x: 340, y: 210 });
 
     // No ForceGraph instance available (e.g. WebGL unavailable) -- no position.

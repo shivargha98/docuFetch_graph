@@ -18,8 +18,8 @@ export interface UseFolderConfigResult {
   error: string | null;
   /** True while a GET prefill or POST submission is in flight. */
   submitting: boolean;
-  /** Submits a new folder path to the backend for validation and watching. */
-  submit: (path: string) => Promise<void>;
+  /** Submits a new folder path to the backend for validation and watching. Resolves true on success. */
+  submit: (path: string) => Promise<boolean>;
 }
 
 /**
@@ -58,7 +58,11 @@ export function useFolderConfig(): UseFolderConfigResult {
       .then(async (res) => {
         const body = await res.json();
         if (cancelled) return;
-        if (res.ok) {
+        // path is null on a fresh backend (no folder selected yet — the
+        // backend no longer defaults to a WATCH_FOLDER): leave folderPath
+        // null so the UI shows its folder chooser instead of claiming to
+        // watch something.
+        if (res.ok && typeof body.path === "string" && body.path.length > 0) {
           setDefaultFolder(body.path);
           dispatch({ type: "RESET_FOLDER", folderPath: body.path });
           dispatch({ type: "STATUS_UPDATE", status: { state: "watching" } });
@@ -76,7 +80,7 @@ export function useFolderConfig(): UseFolderConfigResult {
   }, [dispatch]);
 
   const submit = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<boolean> => {
       setSubmitting(true);
       try {
         const res = await fetch("/api/folder-config", {
@@ -90,11 +94,13 @@ export function useFolderConfig(): UseFolderConfigResult {
           setDefaultFolder(body.path);
           dispatch({ type: "RESET_FOLDER", folderPath: body.path });
           dispatch({ type: "STATUS_UPDATE", status: { state: "watching" } });
-        } else {
-          setError(extractErrorMessage(body));
+          return true;
         }
+        setError(extractErrorMessage(body));
+        return false;
       } catch {
         setError("Could not reach the server.");
+        return false;
       } finally {
         setSubmitting(false);
       }

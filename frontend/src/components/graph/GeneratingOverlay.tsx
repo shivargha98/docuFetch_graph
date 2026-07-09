@@ -4,9 +4,10 @@
  * cleared by useGeneratingStatus polling /api/ingest-status). Reads as the
  * scene scanning the new folder: a sonar ping of expanding ion rings from the
  * viewport center, a sparse field of drifting ion/synapse particles, and a
- * centered telemetry readout — mono eyebrow, "Generating graph" headline, and
- * a live "{n} concepts discovered" counter — over a subtle edge vignette so
- * nodes materializing beneath stay visible. Purely presentational and
+ * compact glass telemetry banner pinned to the TOP of the viewport — mono
+ * eyebrow, "Generating graph" headline, and a live "{n} concepts discovered"
+ * counter — over a subtle edge vignette. The banner deliberately avoids the
+ * center, where the graph materializes brightly beneath the overlay. Purely presentational and
  * pointer-events-none throughout (orbit/zoom still reach the canvas);
  * GraphView supplies the live node count. All motion is CSS keyframes on
  * theme tokens (see "Generating overlay animations" in index.css; disabled
@@ -73,10 +74,18 @@ export function GeneratingOverlay({ nodeCount }: GeneratingOverlayProps) {
         />
       ))}
 
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-text-secondary">:: Ingesting folder</p>
-        <h2 className="font-display text-lg uppercase tracking-wide text-ion">Generating graph</h2>
-        <p className="font-mono text-sm tabular-nums text-synapse">{nodeCount} concepts discovered</p>
+      {/* Readout rides the TOP of the viewport, not the center: the graph
+          materializes brightly in the middle beneath this overlay, and a
+          centered readout collided with it (unreadable text over glowing
+          nodes — user screenshot 2026-07-10). */}
+      <div className="absolute inset-x-0 top-6 flex justify-center">
+        <div className="glass-panel flex items-baseline gap-3 rounded-full px-5 py-2 shadow-glow-soft">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-text-secondary">
+            :: Ingesting
+          </span>
+          <h2 className="font-display text-sm uppercase tracking-wide text-ion">Generating graph</h2>
+          <p className="font-mono text-xs tabular-nums text-synapse">{nodeCount} concepts discovered</p>
+        </div>
       </div>
     </div>
   );

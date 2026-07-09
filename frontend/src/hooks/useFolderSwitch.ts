@@ -1,44 +1,48 @@
 /**
- * Thin wrapper around useFolderConfig that additionally tears down the graph
- * and chat slices whenever the watched folder actually switches (as opposed
- * to the very first prefill on mount), so stale nodes/messages from the
- * previous folder don't linger while the new folder's graph refetches.
- * Source: Feature: Folder Switching & Session Reset (docs/frontend/features.md), Issue 14.
+ * Thin wrapper around useFolderConfig whose `submit` additionally tears down
+ * the graph and chat slices — RESET_GRAPH + GENERATING_START + RESET_SESSION
+ * — whenever the submit SUCCEEDS, so stale nodes/messages from the previous
+ * folder don't linger while the new folder's graph re-ingests.
+ *
+ * The trio is driven by the submit's success signal (useFolderConfig.submit
+ * resolves true on success), NOT by watching folderPath for a
+ * non-null -> different-non-null transition as earlier rounds did: with no
+ * default folder at boot, the app's FIRST selection is a null -> path
+ * transition, and a re-select of the current folder is a no-transition — the
+ * old inference silently skipped both (no generating overlay, stale chat).
+ * Every successful POST /api/folder-config re-ingests server-side, so the
+ * trio is correct on every success. The initial GET prefill never passes
+ * through submit and so never trips a teardown.
+ * Source: Feature: Folder Switching & Session Reset (docs/frontend/features.md),
+ * Issue 14; success-signal rework 2026-07-09.
  */
-import { useEffect, useRef } from "react";
+import { useCallback } from "react";
 import { useFolderConfig, type UseFolderConfigResult } from "./useFolderConfig";
-import { useGraphState, useChatState, useIngestionState } from "../state/providers";
+import { useGraphState, useChatState } from "../state/providers";
 
 /**
- * Wraps useFolderConfig unchanged (same returned shape), and watches the
- * shared ingestion state's `folderPath` for a genuine switch -- a change
- * from one non-null path to a different non-null path, which only happens
- * after a successful `submit` (the initial GET prefill goes null -> path,
- * and a failed submit leaves `folderPath` unchanged, so neither trips this).
- * On a genuine switch, dispatches RESET_GRAPH and RESET_SESSION so the old
- * folder's graph/transcript clear immediately, before/as useGraphData's own
- * folderPath-keyed refetch completes; also dispatches GENERATING_START so the
- * UI can show a generating overlay while the new folder's graph loads (added
- * for the folder-selection rework).
+ * Wraps useFolderConfig (same returned shape) with a submit that resets the
+ * graph/chat slices and starts the generating overlay on every successful
+ * folder switch.
  */
 export function useFolderSwitch(): UseFolderConfigResult {
   const folderConfig = useFolderConfig();
   const { dispatch: dispatchGraph } = useGraphState();
   const { dispatch: dispatchChat } = useChatState();
-  const {
-    state: { folderPath },
-  } = useIngestionState();
-  const previousFolderPathRef = useRef<string | null>(null);
+  const { submit } = folderConfig;
 
-  useEffect(() => {
-    const previous = previousFolderPathRef.current;
-    if (previous !== null && folderPath !== null && folderPath !== previous) {
-      dispatchGraph({ type: "RESET_GRAPH" });
-      dispatchGraph({ type: "GENERATING_START" });
-      dispatchChat({ type: "RESET_SESSION" });
-    }
-    previousFolderPathRef.current = folderPath;
-  }, [folderPath, dispatchGraph, dispatchChat]);
+  const submitAndReset = useCallback(
+    async (path: string): Promise<boolean> => {
+      const succeeded = await submit(path);
+      if (succeeded) {
+        dispatchGraph({ type: "RESET_GRAPH" });
+        dispatchGraph({ type: "GENERATING_START" });
+        dispatchChat({ type: "RESET_SESSION" });
+      }
+      return succeeded;
+    },
+    [submit, dispatchGraph, dispatchChat]
+  );
 
-  return folderConfig;
+  return { ...folderConfig, submit: submitAndReset };
 }

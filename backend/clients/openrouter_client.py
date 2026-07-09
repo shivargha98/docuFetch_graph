@@ -8,23 +8,28 @@ resolution's ambiguous band (Issue 5).
 The three chat roles (extraction/traversal/adjudication) call the Anthropic
 API directly with ANTHROPIC_MODEL (Claude Haiku) — swapped from OpenRouter
 because the free-tier OpenRouter reasoning model returned empty content for
-these prompts (see docs/backend/backend_context.md). Embeddings stay on
-OpenRouter (OPENROUTER_EMBED_MODEL via the `openai` SDK pointed at
-OpenRouter's base URL) since Anthropic has no embeddings API. The module
-keeps its historical name because every call site and test fixture
-monkeypatches functions on `backend.clients.openrouter_client`.
+these prompts (see docs/backend/backend_context.md). Embeddings call the
+Gemini API (GEMINI_EMBED_MODEL via the `openai` SDK pointed at Google's
+OpenAI-compatible endpoint) — swapped from OpenRouter's free-tier embed
+model after its rate limits killed ingestion runs; Anthropic has no
+embeddings API. The module keeps its historical name because every call
+site and test fixture monkeypatches functions on
+`backend.clients.openrouter_client`.
 """
 import json
 import logging
+import math
 
 from anthropic import Anthropic
 from openai import OpenAI
 
-from backend.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, OPENROUTER_API_KEY, OPENROUTER_EMBED_MODEL
+from backend.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, GEMINI_EMBED_MODEL, GOOGLE_API_KEY
 
 logger = logging.getLogger(__name__)
 
-_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
+_gemini_client = OpenAI(
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=GOOGLE_API_KEY
+)
 _anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 _EXTRACTION_SYSTEM_PROMPT = (
@@ -115,22 +120,26 @@ def extract_concepts(chunk_text: str) -> dict:
 
 def embed_text(text: str) -> list[float]:
     """
-    Return an embedding vector for `text` using OPENROUTER_EMBED_MODEL.
+    Return a unit-normalized embedding vector for `text` using
+    GEMINI_EMBED_MODEL via Google's OpenAI-compatible endpoint.
 
     Unlike extract_concepts, a failure here is NOT swallowed into an empty/
     zero-vector fallback: it propagates as an exception. A silently-returned
     zero vector would still get stored and matched against, quietly
-    corrupting similarity search, whereas the caller (vector_store) can
-    catch this per-chunk and simply skip storing that chunk's embedding,
-    matching the ingestion pipeline's existing per-chunk resilience pattern.
+    corrupting similarity search, whereas callers contain the failure per
+    chunk/file (vector_store, diff_scan's per-file guard).
 
-    encoding_format="float" is required: without it the openai SDK silently
-    requests base64-encoded embeddings, which OpenRouter's embed endpoint
-    doesn't honor for this model — the response comes back with no data and
-    the SDK raises ValueError("No embedding data received").
+    The vector is normalized client-side: Gemini embeddings aren't
+    guaranteed unit-length (especially at reduced dimensionality), and both
+    NO_MATCH_SIMILARITY_CUTOFF and the entity-resolution bands assume
+    Chroma's squared-L2 over unit vectors (= 2 - 2*cosine).
     """
-    completion = _client.embeddings.create(model=OPENROUTER_EMBED_MODEL, input=text, encoding_format="float")
-    return completion.data[0].embedding
+    completion = _gemini_client.embeddings.create(
+        model=GEMINI_EMBED_MODEL, input=text, encoding_format="float"
+    )
+    vector = completion.data[0].embedding
+    norm = math.sqrt(sum(component * component for component in vector))
+    return [component / norm for component in vector] if norm else vector
 
 
 _TRAVERSAL_SYSTEM_PROMPT = (

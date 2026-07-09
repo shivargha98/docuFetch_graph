@@ -2,17 +2,14 @@
  * Hook that uploads a collected set of folder-relative files to the backend's
  * folder-upload endpoint. Mirrors useFolderConfig.submit's fetch/error/dispatch
  * structure: on success, mirrors the returned path into the global ingestion
- * state (RESET_FOLDER + STATUS_UPDATE watching), which drives the same
- * genuine-folder-switch wiring (useFolderSwitch's RESET_GRAPH/RESET_SESSION/
- * GENERATING_START) as a browse-path submit does.
- *
- * Same-path re-upload (the advertised "re-drop to refresh" flow): when the
- * returned path EQUALS the current folderPath, useFolderSwitch's change-based
- * wiring never fires even though the backend wiped, re-ingested, and reset
- * the chat session — so this hook dispatches RESET_GRAPH/GENERATING_START/
- * RESET_SESSION itself in that case. `uploadEntries` also resolves to a
- * success boolean so FolderDock can react (collapse the dock)
- * without inferring success from a folderPath change.
+ * state (RESET_FOLDER + STATUS_UPDATE watching) and dispatches the reset trio
+ * (RESET_GRAPH + GENERATING_START + RESET_SESSION) itself — every successful
+ * upload re-ingests server-side and resets the chat session, whether the
+ * path changed (switch), stayed identical (re-drop to refresh), or went from
+ * null (very first selection on a fresh boot). Success signals drive the
+ * resets; nothing is inferred from folderPath transitions (2026-07-09
+ * rework, matching useFolderSwitch). `uploadEntries` resolves to a success
+ * boolean so FolderDock can react (collapse the dock).
  * Source: Task 6 brief (frontend folder upload plumbing).
  */
 import { useCallback, useState } from "react";
@@ -34,18 +31,15 @@ export interface UseFolderUploadResult {
  * Builds a multipart FormData (a `folder_name` field plus each entry appended
  * under `files` with its relativePath as the filename) and POSTs it to
  * `/api/ingest/upload`, tracking in-flight/error state. On success, dispatches
- * RESET_FOLDER and STATUS_UPDATE (watching) to the shared ingestion state,
- * same as useFolderConfig.submit — plus, when the path didn't change (re-drop
- * of the currently-active uploaded copy), the graph/chat reset trio that
- * useFolderSwitch would otherwise dispatch on the path change.
+ * the graph/chat reset trio plus RESET_FOLDER and STATUS_UPDATE (watching),
+ * mirroring useFolderSwitch's success wiring.
  */
 export function useFolderUpload(): UseFolderUploadResult {
-  const { state, dispatch } = useIngestionState();
+  const { dispatch } = useIngestionState();
   const { dispatch: dispatchGraph } = useGraphState();
   const { dispatch: dispatchChat } = useChatState();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const currentFolderPath = state.folderPath;
 
   const uploadEntries = useCallback(
     async (folderName: string, entries: UploadEntry[]): Promise<boolean> => {
@@ -63,14 +57,9 @@ export function useFolderUpload(): UseFolderUploadResult {
         const body = await res.json();
         if (res.ok) {
           setError(null);
-          if (body.path === currentFolderPath) {
-            // Re-ingest of the already-active copy: the backend re-ingested
-            // and reset the chat session, but folderPath won't change, so
-            // useFolderSwitch's wiring stays silent — dispatch it here.
-            dispatchGraph({ type: "RESET_GRAPH" });
-            dispatchGraph({ type: "GENERATING_START" });
-            dispatchChat({ type: "RESET_SESSION" });
-          }
+          dispatchGraph({ type: "RESET_GRAPH" });
+          dispatchGraph({ type: "GENERATING_START" });
+          dispatchChat({ type: "RESET_SESSION" });
           dispatch({ type: "RESET_FOLDER", folderPath: body.path });
           dispatch({ type: "STATUS_UPDATE", status: { state: "watching" } });
           return true;
@@ -84,7 +73,7 @@ export function useFolderUpload(): UseFolderUploadResult {
         setUploading(false);
       }
     },
-    [dispatch, dispatchGraph, dispatchChat, currentFolderPath]
+    [dispatch, dispatchGraph, dispatchChat]
   );
 
   return { uploading, error, uploadEntries };

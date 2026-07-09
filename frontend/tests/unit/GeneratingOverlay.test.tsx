@@ -7,18 +7,19 @@
  * Source: Task 9 of docs/superpowers/plans/2026-07-06-folder-selection-rework.md.
  *
  * GraphView-mounting tests reuse the suite's standard
- * `vi.mock("react-force-graph-3d", ...)` capture-props stand-in (jsdom has no
+ * `vi.mock("react-force-graph-2d", ...)` capture-props stand-in (jsdom has no
  * WebGL) — see tests/integration/useGraphData.test.tsx.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { useEffect } from "react";
 import { render, screen, cleanup, waitFor, act } from "@testing-library/react";
 import { mockFetch, resetAllMocks } from "../setup";
-import { AppProviders, useGraphState } from "../../src/state/providers";
+import { AppProviders, useGraphState, useIngestionState } from "../../src/state/providers";
 import { GeneratingOverlay } from "../../src/components/graph/GeneratingOverlay";
 import { GraphView } from "../../src/components/graph/GraphView";
 import type { GraphAction } from "../../src/state/types";
 
-vi.mock("react-force-graph-3d", () => ({
+vi.mock("react-force-graph-2d", () => ({
   default: () => null,
 }));
 
@@ -65,6 +66,17 @@ describe("GeneratingOverlay", () => {
   });
 });
 
+
+/** Seeds an active folder so GraphView's folder-gated graph fetch runs (no folder -> no graph). */
+function FolderSeed() {
+  const { dispatch } = useIngestionState();
+  useEffect(() => {
+    dispatch({ type: "RESET_FOLDER", folderPath: "/docs" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
 /** Mounts GraphView and exposes graph dispatch, so tests can drive the `generating` flag directly. */
 function Harness({ dispatchRef }: { dispatchRef: { current: ((action: GraphAction) => void) | null } }) {
   const { dispatch } = useGraphState();
@@ -85,6 +97,7 @@ describe("GeneratingOverlay lifecycle in GraphView", () => {
 
     render(
       <AppProviders>
+        <FolderSeed />
         <Harness dispatchRef={dispatchRef} />
       </AppProviders>
     );
@@ -125,6 +138,7 @@ describe("GeneratingOverlay lifecycle in GraphView", () => {
 
     render(
       <AppProviders>
+        <FolderSeed />
         <Harness dispatchRef={dispatchRef} />
       </AppProviders>
     );

@@ -1,51 +1,23 @@
 /**
- * Tests for the graph viewport's manual zoom controls: the pure camera-dolly
- * math (zoomedCameraPosition) and the +/− buttons rendered in the viewport's
- * top-right corner. The real camera move is imperative WebGL (untestable in
- * jsdom — fgRef stays undefined under the suite's standard force-graph mock),
- * so the math is exported pure, same pattern as reprojectNodeToScreen.
+ * Tests for the graph viewport's manual zoom controls: the +/− buttons
+ * rendered in the viewport's top-right corner. The zoom itself is the 2D
+ * library's scalar `fg.zoom()` (imperative canvas, untestable in jsdom —
+ * fgRef stays undefined under the suite's standard force-graph mock).
  * Source: user request 2026-07-09 (manual zoom instead of continuous auto-fit).
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { mockFetch, resetAllMocks } from "../setup";
 import { AppProviders } from "../../src/state/providers";
-import { GraphView, zoomedCameraPosition } from "../../src/components/graph/GraphView";
+import { GraphView } from "../../src/components/graph/GraphView";
 
-vi.mock("react-force-graph-3d", () => ({
+vi.mock("react-force-graph-2d", () => ({
   default: () => null,
 }));
 
 afterEach(() => {
   resetAllMocks();
   cleanup();
-});
-
-describe("zoomedCameraPosition", () => {
-  it("scales the camera's offset from the target by the factor (in and out)", () => {
-    /**
-     * Given a camera at (0, 0, 100) orbiting a target at the origin,
-     * then factor 0.5 halves the distance and factor 2 doubles it, along the
-     * same view axis.
-     */
-    const target = { x: 0, y: 0, z: 0 };
-    expect(zoomedCameraPosition({ x: 0, y: 0, z: 100 }, target, 0.5)).toEqual({ x: 0, y: 0, z: 50 });
-    expect(zoomedCameraPosition({ x: 0, y: 0, z: 100 }, target, 2)).toEqual({ x: 0, y: 0, z: 200 });
-  });
-
-  it("dollies relative to a non-origin target, preserving the view direction", () => {
-    /**
-     * Given a camera offset (30, 0, 40) from a target at (10, 20, 30),
-     * when zooming in by 0.5,
-     * then the offset halves component-wise while the target stays fixed.
-     */
-    const target = { x: 10, y: 20, z: 30 };
-    expect(zoomedCameraPosition({ x: 40, y: 20, z: 70 }, target, 0.5)).toEqual({
-      x: 25,
-      y: 20,
-      z: 50,
-    });
-  });
 });
 
 describe("graph zoom buttons", () => {

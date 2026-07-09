@@ -17,14 +17,24 @@ from backend import config
 from backend.chat_session import session as chat_session
 from backend.graph_store.store import GraphStore
 from backend.ingestion import startup
+from backend.ingestion.hash_store import save_hash_store
 from backend.ingestion.watcher import FolderWatcher
 from backend.vector_store.store import VectorStore
 
 router = APIRouter()
 
-_current_folder: str = config.WATCH_FOLDER
+# No folder is active until the user explicitly selects one (browse/upload):
+# the app must not claim to watch anything at boot — previously this
+# defaulted to WATCH_FOLDER, so the UI showed "Watching <folder>" for a
+# folder no watcher was actually running against.
+_current_folder: str | None = None
 _current_watcher: FolderWatcher | None = None
 _current_ingest_thread: threading.Thread | None = None
+
+
+def get_active_folder() -> str | None:
+    """The currently selected folder path, or None when nothing is active (fresh boot, nothing chosen yet)."""
+    return _current_folder
 
 
 class FolderConfigRequest(BaseModel):
@@ -52,6 +62,12 @@ def switch_to_folder(new_path: Path) -> None:
     GraphStore().persist(graph_store_path)
     vector_store = VectorStore()
     vector_store.clear_all()
+    # The hash store must be purged together with the graph/vector stores:
+    # the startup diff-scan skips any file whose hash matches, so stale
+    # entries from a previous ingestion of the same content (re-upload of a
+    # copy, switching back to a folder) would leave the freshly-wiped graph
+    # permanently empty and end the reconciliation thread instantly.
+    save_hash_store({}, hash_store_path)
 
     graph_store, thread = startup.startup(new_path, graph_store_path, hash_store_path, vector_store)
     _current_ingest_thread = thread

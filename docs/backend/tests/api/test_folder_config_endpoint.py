@@ -35,7 +35,7 @@ def _reset_folder_config_state():
                 config_routes._current_watcher.stop()
             except Exception:
                 pass
-        config_routes._current_folder = config.WATCH_FOLDER
+        config_routes._current_folder = None
         config_routes._current_watcher = None
 
     _reset()
@@ -45,16 +45,17 @@ def _reset_folder_config_state():
 
 def test_first_load_reflects_watch_folder_as_default(fastapi_test_client):
     """
-    Given a freshly started backend with WATCH_FOLDER set in .env and no
-    prior folder selection,
+    Given a freshly started backend with no prior folder selection,
     when the folder-configuration endpoint is called,
-    the response should reflect WATCH_FOLDER as the current/default folder.
+    the response must report no active folder (path: null) — the app must
+    not claim to watch anything the user never chose (amends the old
+    WATCH_FOLDER-default behavior; the UI shows its folder chooser instead).
 
-    Source: Feature: Folder Configuration Endpoint — criterion 1; Issue 15 — criterion 1
+    Source: Feature: Folder Configuration Endpoint — criterion 1, amended 2026-07-09
     """
     response = fastapi_test_client.get(FOLDER_CONFIG_ENDPOINT)
     assert response.status_code == 200
-    assert response.json() == {"path": config.WATCH_FOLDER}
+    assert response.json() == {"path": None}
 
 
 def test_submitting_new_folder_path_tears_down_and_restarts_watcher(fastapi_test_client, tmp_path):
@@ -153,6 +154,49 @@ def test_submitting_new_folder_path_purges_previous_folder_vector_embeddings(
 
         fresh_store = VectorStore()
         assert fresh_store.collection.count() == 0
+
+
+def test_folder_switch_reingests_content_whose_hashes_match_the_stale_hash_store(
+    fastapi_test_client, tmp_path, mock_extraction_llm, mock_embedding_client
+):
+    """
+    Given the hash store already records the exact content of a file in the
+    target folder (re-upload of the same copy, or switching back to a
+    previously-ingested folder),
+    when the watched folder is switched,
+    the file must still be re-ingested: switch_to_folder wipes the graph and
+    vector stores, so the hash store must be purged with them — otherwise the
+    diff-scan skips every hash-matched file, nothing repopulates the wiped
+    graph, and the reconciliation thread dies instantly (empty graph and no
+    "generating" signal for the UI).
+    """
+    import json
+    from pathlib import Path
+
+    from backend.ingestion.hash_store import compute_file_hash
+
+    folder = tmp_path / "b"
+    folder.mkdir()
+    doc = folder / "doc.md"
+    doc.write_text("# Doc\nAlpha concept text.", encoding="utf-8")
+
+    hash_store_path = Path(config.HASH_STORE_PATH)
+    hash_store_path.parent.mkdir(parents=True, exist_ok=True)
+    hash_store_path.write_text(json.dumps({str(doc): compute_file_hash(doc)}), encoding="utf-8")
+
+    mock_extraction_llm.set_response(
+        {"concepts": [{"name": "Alpha", "description": "the first concept"}], "relations": []}
+    )
+
+    with patch.object(config_routes.FolderWatcher, "start", autospec=True), patch.object(
+        config_routes.FolderWatcher, "stop", autospec=True
+    ):
+        response = fastapi_test_client.post(FOLDER_CONFIG_ENDPOINT, json={"path": str(folder)})
+        assert response.status_code == 200
+        config_routes._current_ingest_thread.join(timeout=10)
+
+    persisted = json.loads(Path(config.GRAPH_STORE_PATH).read_text(encoding="utf-8"))
+    assert any(node["id"] == "concept_alpha" for node in persisted["nodes"])
 
 
 def test_submitting_invalid_folder_path_returns_error_without_crashing(fastapi_test_client):

@@ -52,6 +52,31 @@ function renderFolderSwitch() {
 }
 
 describe("useFolderSwitch", () => {
+  it("marks the graph as generating on the FIRST submit from a fresh boot (no folder active)", async () => {
+    /**
+     * Given a fresh boot with NO active folder (prefill returns path: null),
+     * when the first browse submit succeeds (folderPath null -> path),
+     * then RESET_GRAPH/GENERATING_START fire: the trio is driven by the
+     * submit's success signal, not by a non-null -> non-null path change.
+     */
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { path: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { path: "/first/folder", status: "watching" }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderFolderSwitch();
+    await waitFor(() => expect(result.current.folderSwitch.submitting).toBe(false));
+    expect(result.current.ingestion.state.folderPath).toBeNull();
+
+    await act(async () => {
+      await result.current.folderSwitch.submit("/first/folder");
+    });
+
+    expect(result.current.ingestion.state.folderPath).toBe("/first/folder");
+    await waitFor(() => expect(result.current.graph.state.generating).toBe(true));
+  });
+
   it("clears the currently displayed graph when a new valid folder path is submitted", async () => {
     /**
      * Given a folder is already loaded with a populated graph, and fetch is mocked

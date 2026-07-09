@@ -6,12 +6,15 @@ changes made while the backend was offline, reusing the same
 hash-based/change-detection and deletion-cleanup logic the live folder
 watcher uses (Issues 6-7).
 """
+import logging
 import threading
 from pathlib import Path
 
 from backend.graph_store.store import GraphStore
 from backend.ingestion.hash_store import load_hash_store
 from backend.ingestion.watcher import process_file_change, process_file_deletion
+
+logger = logging.getLogger(__name__)
 
 
 def load_persisted_graph(graph_store_path: Path) -> GraphStore:
@@ -28,16 +31,28 @@ def diff_scan(watch_folder: Path, graph_store: GraphStore, vector_store, hash_st
     or changed files, no-ops on unchanged ones); for every path recorded in
     the hash store but no longer present on disk, run
     `process_file_deletion`.
+
+    Per-file failures (a flaky LLM/embedding call, an unreadable file) are
+    logged and contained to that file rather than propagating: this function
+    runs on the reconciliation thread, and an uncaught exception here used to
+    kill the entire ingestion silently — the UI saw "not ingesting" and an
+    empty graph with no visible cause.
     """
     current_files = [path for path in watch_folder.rglob("*") if path.is_file()]
     for path in current_files:
-        process_file_change(path, graph_store, vector_store, hash_store_path)
+        try:
+            process_file_change(path, graph_store, vector_store, hash_store_path)
+        except Exception:
+            logger.exception("diff_scan: skipping %s after an ingestion error", path)
 
     current_paths = {str(path) for path in current_files}
     hashes = load_hash_store(hash_store_path)
     deleted_paths = [path for path in hashes if path not in current_paths]
     for path_str in deleted_paths:
-        process_file_deletion(Path(path_str), graph_store, vector_store, hash_store_path)
+        try:
+            process_file_deletion(Path(path_str), graph_store, vector_store, hash_store_path)
+        except Exception:
+            logger.exception("diff_scan: skipping deletion cleanup for %s after an error", path_str)
 
 
 def startup(

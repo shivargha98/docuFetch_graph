@@ -1,11 +1,10 @@
 /**
  * Integration tests for useFolderUpload, which POSTs a collected set of
  * folder-relative files to the backend's folder-upload endpoint and, on
- * success, mirrors the returned path into ingestion state exactly like
- * useFolderConfig.submit does -- which in turn makes the already-wired
- * useFolderSwitch fire RESET_GRAPH/RESET_SESSION/GENERATING_START, since a
- * genuine (non-null -> different non-null) folderPath change is genuine
- * regardless of whether it came from a browse submit or an upload.
+ * success, dispatches the reset trio (RESET_GRAPH/GENERATING_START/
+ * RESET_SESSION) itself plus the ingestion-state updates — success signals
+ * drive the resets for every case: path change, same-path re-drop, and the
+ * very first selection from an empty boot (2026-07-09 rework).
  * Source: Task 6 brief (frontend folder upload plumbing).
  *
  * These tests stub `fetch` locally with a queued sequence of responses
@@ -123,6 +122,35 @@ describe("useFolderUpload", () => {
     expect(result.current.ingestion.state.folderPath).toBe("/srv/uploads/notes");
     await waitFor(() => expect(result.current.graph.state.generating).toBe(true));
     expect(result.current.upload.error).toBeNull();
+  });
+
+  it("marks the graph as generating on the FIRST upload from a fresh boot (no folder active)", async () => {
+    /**
+     * Given a fresh boot with NO active folder (prefill returns path: null —
+     * the backend has no default folder),
+     * when the first upload succeeds (folderPath transitions null -> path),
+     * then `generating` becomes true: the reset trio must be driven by the
+     * flow's success signal, not inferred from a non-null -> non-null path
+     * change (which a first selection never produces).
+     */
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { path: null }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { path: "/srv/uploads/notes", status: "watching", mode: "uploaded" })
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderFolderUpload();
+    await waitFor(() => expect(result.current.upload.uploading).toBe(false));
+    expect(result.current.ingestion.state.folderPath).toBeNull();
+
+    await act(async () => {
+      await result.current.upload.uploadEntries("notes", sampleEntries);
+    });
+
+    expect(result.current.ingestion.state.folderPath).toBe("/srv/uploads/notes");
+    await waitFor(() => expect(result.current.graph.state.generating).toBe(true));
   });
 
   it("sends a FormData request with folder_name and each file appended under files using relativePath", async () => {

@@ -1,9 +1,9 @@
 /**
- * Raw hex color constants for the 3D concept-graph scene, mirroring the app's
- * `--color-void` / `--color-ion` / `--color-synapse` design tokens defined in
- * src/index.css. three.js scene/material/fog APIs need raw color values (not
- * CSS custom properties), so the same hexes are re-declared here rather than
- * read from the stylesheet at runtime.
+ * Raw hex color constants for the concept-graph canvas scene, mirroring the
+ * app's `--color-void` / `--color-ion` / `--color-synapse` design tokens
+ * defined in src/index.css. Canvas 2D fill/stroke APIs need raw color values
+ * (not CSS custom properties), so the same hexes are re-declared here rather
+ * than read from the stylesheet at runtime.
  */
 
 /** Deep indigo-black scene background, matching `--color-void`. */

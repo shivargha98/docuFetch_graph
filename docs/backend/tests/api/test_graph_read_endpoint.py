@@ -7,9 +7,36 @@ GET /api/graph -> {"nodes": [{"id", "name", "description", "source_files"}],
 "edges": [{"source", "target", "relation"}]}. No pagination in v1.
 """
 import backend.config as config
+from backend.api import config_routes
 from backend.graph_store.store import GraphStore
 
 GRAPH_READ_ENDPOINT = "/api/graph"
+
+
+def _activate_folder(monkeypatch, path="/some/active/folder"):
+    """Mark a folder as actively selected: the graph-read endpoint only serves
+    graph data while a folder is active (no folder -> empty payload, however
+    much stale data is persisted on disk)."""
+    monkeypatch.setattr(config_routes, "_current_folder", path)
+
+
+def test_graph_read_returns_empty_when_no_folder_is_active(fastapi_test_client, sample_graph, tmp_path, monkeypatch):
+    """
+    Given graph data persisted on disk from an earlier session but NO folder
+    actively selected (fresh boot),
+    when the graph-read endpoint is called,
+    the response must be an empty payload: stale data from a previous
+    session must not render as if something were being watched.
+    """
+    graph_path = tmp_path / "graph_store.json"
+    monkeypatch.setattr(config, "GRAPH_STORE_PATH", str(graph_path))
+    GraphStore(graph=sample_graph).persist(graph_path)
+    monkeypatch.setattr(config_routes, "_current_folder", None)
+
+    response = fastapi_test_client.get(GRAPH_READ_ENDPOINT)
+
+    assert response.status_code == 200
+    assert response.json() == {"nodes": [], "edges": []}
 
 
 def test_graph_read_returns_all_current_nodes_and_edges(fastapi_test_client, sample_graph, tmp_path, monkeypatch):
@@ -23,6 +50,7 @@ def test_graph_read_returns_all_current_nodes_and_edges(fastapi_test_client, sam
     graph_path = tmp_path / "graph_store.json"
     monkeypatch.setattr(config, "GRAPH_STORE_PATH", str(graph_path))
     GraphStore(graph=sample_graph).persist(graph_path)
+    _activate_folder(monkeypatch)
 
     response = fastapi_test_client.get(GRAPH_READ_ENDPOINT)
 
@@ -45,6 +73,7 @@ def test_each_returned_edge_includes_relation_type_label(fastapi_test_client, sa
     graph_path = tmp_path / "graph_store.json"
     monkeypatch.setattr(config, "GRAPH_STORE_PATH", str(graph_path))
     GraphStore(graph=sample_graph).persist(graph_path)
+    _activate_folder(monkeypatch)
 
     response = fastapi_test_client.get(GRAPH_READ_ENDPOINT)
 
@@ -88,6 +117,7 @@ def test_graph_read_response_shape_matches_finalized_contract(fastapi_test_clien
     graph_path = tmp_path / "graph_store.json"
     monkeypatch.setattr(config, "GRAPH_STORE_PATH", str(graph_path))
     GraphStore(graph=sample_graph).persist(graph_path)
+    _activate_folder(monkeypatch)
 
     response = fastapi_test_client.get(GRAPH_READ_ENDPOINT)
 

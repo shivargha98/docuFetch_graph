@@ -341,6 +341,41 @@ def test_startup_loads_persisted_graph_immediately_then_reconciles_offline_chang
     assert str(unchanged_file) in hashes
 
 
+def test_diff_scan_survives_a_file_that_fails_to_ingest(tmp_watch_folder, monkeypatch):
+    """
+    Given one file in the folder whose ingestion raises (LLM/embedding
+    failure, unreadable file, ...),
+    when the startup diff-scan runs,
+    the failure must be contained to that file: the remaining files still
+    ingest and the scan completes. Previously any single uncaught per-file
+    exception killed the whole reconciliation thread silently -- the UI saw
+    "not ingesting" within a poll and an empty graph, with the only evidence
+    a traceback in the server console.
+    """
+    from backend.ingestion import startup as startup_module
+
+    bad = tmp_watch_folder / "bad.md"
+    bad.write_text("# Bad\nBoom.", encoding="utf-8")
+    good = tmp_watch_folder / "good.md"
+    good.write_text("# Good\nFine.", encoding="utf-8")
+
+    processed = []
+
+    def fake_process_file_change(path, graph_store, vector_store, hash_store_path):
+        if path.name == "bad.md":
+            raise RuntimeError("simulated embedding failure")
+        processed.append(path.name)
+        return True
+
+    monkeypatch.setattr(startup_module, "process_file_change", fake_process_file_change)
+
+    startup_module.diff_scan(
+        tmp_watch_folder, GraphStore(), None, tmp_watch_folder.parent / "hash.json"
+    )
+
+    assert processed == ["good.md"]
+
+
 def test_first_ever_startup_with_no_prior_state_performs_full_ingestion(
     tmp_watch_folder, mock_extraction_llm
 ):

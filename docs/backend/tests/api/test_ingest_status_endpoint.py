@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from backend import config
 from backend.api import config_routes
 
 INGEST_STATUS_ENDPOINT = "/api/ingest-status"
@@ -23,7 +22,7 @@ def _reset_folder_config_state():
                 config_routes._current_watcher.stop()
             except Exception:
                 pass
-        config_routes._current_folder = config.WATCH_FOLDER
+        config_routes._current_folder = None
         config_routes._current_watcher = None
         config_routes._current_ingest_thread = None
     _reset()
@@ -32,10 +31,10 @@ def _reset_folder_config_state():
 
 
 def test_status_is_idle_when_no_switch_has_happened(fastapi_test_client):
-    """Given a fresh backend, ingest-status reports ingesting: False and the current folder path."""
+    """Given a fresh backend, ingest-status reports ingesting: False and no active folder (path: null)."""
     response = fastapi_test_client.get(INGEST_STATUS_ENDPOINT)
     assert response.status_code == 200
-    assert response.json() == {"ingesting": False, "path": config.WATCH_FOLDER}
+    assert response.json() == {"ingesting": False, "path": None}
 
 
 def test_status_reports_ingesting_while_reconciliation_thread_alive(fastapi_test_client):

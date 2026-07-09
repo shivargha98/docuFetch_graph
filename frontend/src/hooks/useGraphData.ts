@@ -26,6 +26,10 @@ export function useGraphData(): void {
   const { folderPath } = ingestionState;
 
   useEffect(() => {
+    // No active folder, no graph: with nothing selected there is nothing to
+    // show — fetching here used to render a previous session's stale
+    // persisted graph as if something were being watched.
+    if (!folderPath) return;
     fetch("/api/graph")
       .then((res) => res.json())
       .then((data: GraphReadResponse) => {
