@@ -5,10 +5,11 @@
  * independently without touching this list logic.
  *
  * Round 3 (Issue 10) additions:
- * - Mounts `useTraversalSync()` here (rather than in ChatPanel, which isn't
+ * - Mounts `useTraversalSync()` here (rather than in ChatDock, which isn't
  *   in this round's owned-file list) so the trace-driven graph
  *   highlight/camera-follow sync keeps running for as long as the transcript
- *   stays mounted -- which, thanks to `ChatPanel`'s `forceMount`, is
+ *   stays mounted -- which, thanks to `ChatDock` keeping its body CSS-hidden
+ *   rather than unmounted while collapsed, is
  *   unconditional, even while the chat panel is collapsed. Mirrors
  *   `useChatSession`'s own always-mounted rationale.
  * - Pairs each completed query's trace with its answer message so a

@@ -6,7 +6,7 @@
  * to its caller. A single-file drop shows an inline "Drop a folder, not a
  * file" hint instead of uploading, and a folder with no supported files shows
  * an inline error without initiating any request. Network submission lives in
- * useFolderUpload (wired by FolderPanel); this component only collects.
+ * useFolderUpload (wired by FolderDock); this component only collects.
  *
  * Design (frontend-design skill, invoked before writing this file): the zone
  * reads as the HUD's intake port — a dashed glass hairline field with mono

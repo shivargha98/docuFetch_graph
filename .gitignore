@@ -9,6 +9,7 @@ __pycache__/
 node_modules/
 /chroma_db/
 /uploads/
+issues_screenshots/
 
 # C extensions
 *.so

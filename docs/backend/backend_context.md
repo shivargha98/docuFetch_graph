@@ -147,3 +147,13 @@ Backend half of `docs/superpowers/plans/2026-07-06-folder-selection-rework.md` (
 Tests: `docs/backend/tests/api/test_ingest_status_endpoint.py`, `test_browse_endpoint.py`, `test_upload_endpoint.py`. Full suite after the rework: 105 passed, 1 skipped (the same known entity-resolution-threshold skip).
 
 **Test-hygiene follow-up (2026-07-09):** an autouse `_store_paths_in_tmp` fixture in `docs/backend/tests/conftest.py` now points every persisted-store path (`GRAPH_STORE_PATH`/`HASH_STORE_PATH`/`CHROMA_DB_PATH`, including the by-name copies imported into `pipeline.py`, `watcher.py`, and `vector_store/store.py`) at a per-test tmp dir — previously any test exercising `ingest_file`/`process_file_deletion`/`switch_to_folder` leaked `graph_store.json` etc. into the repo root on every run. Note for future backend code: `pipeline.py` and `watcher.py` persist to a module-level `GRAPH_STORE_PATH` imported by name, so runtime overrides must patch those module attributes, not just `backend.config`.
+
+## LLM chat roles moved to Anthropic Haiku (2026-07-09)
+
+The three OpenRouter chat roles — `extract_concepts` (ingestion), `traversal_next_hop` (query-time hops), `adjudicate_merge` (entity resolution) — now call the Anthropic API directly with `ANTHROPIC_MODEL` (claude-haiku-4-5), fixing the known blocker where the free-tier OpenRouter Nemotron model returned empty content for these prompts (Phase 7 E2E finding). Details:
+
+- All changes are internal to `backend/clients/openrouter_client.py`: same function names/signatures/JSON contracts/error fallbacks, so every call site (`extractor.py`, `traversal.py`, `resolver.py`) and every conftest monkeypatch is untouched. The module keeps its historical name (documented in its header) because the test fixtures patch `backend.clients.openrouter_client.*` attributes.
+- **Embeddings stay on OpenRouter** (`embed_text` / `OPENROUTER_EMBED_MODEL`) — Anthropic has no embeddings API.
+- Each chat call uses **structured outputs** (`output_config.format` with a JSON schema): verified live that Haiku wraps free-form JSON in ```json fences (which fails `json.loads` and silently dropped every chunk); with the schema constraint the API guarantees bare valid JSON. Requires `anthropic` SDK ≥ 0.116 (installed).
+- `OPENROUTER_LLM_MODEL` was removed from `backend/config.py` (now unused; a stale line may linger in `.env` harmlessly). `OPENROUTER_API_KEY` is still required for embeddings.
+- Live smoke test (real API): extraction returned 5 concepts + 4 typed relations from a 2-sentence text; traversal picked the relevant neighbor and skipped the irrelevant one; adjudication merged "LLM"/"Large Language Model". Full suite after the change: 105 passed, 1 skipped.

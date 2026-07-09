@@ -1,8 +1,11 @@
 /**
  * Mode badge for the folder panel's active-source line: tells the user
- * whether the graph is fed by a live server-side folder ("Linked folder") or
- * by a one-shot copy uploaded from their machine ("Uploaded copy · re-drop to
- * refresh"). Purely presentational — the mode is decided by FolderPanel.
+ * whether the graph is fed by a live server-side folder ("Linked") or by a
+ * one-shot copy uploaded from their machine ("Uploaded copy", with the
+ * re-drop-to-refresh guidance in its tooltip — the long inline text crushed
+ * the folder name in the ~340px panel; see
+ * docs/superpowers/specs/2026-07-09-folder-panel-cleanup-design.md). Purely
+ * presentational — the mode is decided by FolderDock.
  *
  * Design (frontend-design skill): reuses the notched synapse-chip vocabulary
  * established by NodeDetailOverlay / FolderBrowserModal's drive chips, with
@@ -24,12 +27,13 @@ export function FolderSourceBadge({ mode }: FolderSourceBadgeProps) {
     <span
       data-testid="folder-source-badge"
       data-mode={mode}
+      title={linked ? undefined : "Re-drop the folder to refresh its copy"}
       className={cn(
         "shrink-0 border px-2 py-0.5 font-mono text-[10px] [clip-path:polygon(6px_0,100%_0,100%_100%,0_100%)]",
         linked ? "border-ion/60 text-ion" : "border-synapse/60 text-synapse"
       )}
     >
-      {linked ? "Linked folder" : "Uploaded copy · re-drop to refresh"}
+      {linked ? "Linked" : "Uploaded copy"}
     </span>
   );
 }

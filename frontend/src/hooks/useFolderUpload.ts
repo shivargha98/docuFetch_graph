@@ -5,10 +5,18 @@
  * state (RESET_FOLDER + STATUS_UPDATE watching), which drives the same
  * genuine-folder-switch wiring (useFolderSwitch's RESET_GRAPH/RESET_SESSION/
  * GENERATING_START) as a browse-path submit does.
+ *
+ * Same-path re-upload (the advertised "re-drop to refresh" flow): when the
+ * returned path EQUALS the current folderPath, useFolderSwitch's change-based
+ * wiring never fires even though the backend wiped, re-ingested, and reset
+ * the chat session — so this hook dispatches RESET_GRAPH/GENERATING_START/
+ * RESET_SESSION itself in that case. `uploadEntries` also resolves to a
+ * success boolean so FolderDock can react (collapse the dock)
+ * without inferring success from a folderPath change.
  * Source: Task 6 brief (frontend folder upload plumbing).
  */
 import { useCallback, useState } from "react";
-import { useIngestionState } from "../state/providers";
+import { useChatState, useGraphState, useIngestionState } from "../state/providers";
 import { extractErrorMessage } from "./useFolderConfig";
 import type { UploadEntry } from "../lib/folderUpload";
 
@@ -18,8 +26,8 @@ export interface UseFolderUploadResult {
   uploading: boolean;
   /** A readable message describing the last failed upload, or null if there is none. */
   error: string | null;
-  /** Uploads the given folder name and collected entries to the backend. */
-  uploadEntries: (folderName: string, entries: UploadEntry[]) => Promise<void>;
+  /** Uploads the given folder name and collected entries to the backend. Resolves true on success. */
+  uploadEntries: (folderName: string, entries: UploadEntry[]) => Promise<boolean>;
 }
 
 /**
@@ -27,15 +35,20 @@ export interface UseFolderUploadResult {
  * under `files` with its relativePath as the filename) and POSTs it to
  * `/api/ingest/upload`, tracking in-flight/error state. On success, dispatches
  * RESET_FOLDER and STATUS_UPDATE (watching) to the shared ingestion state,
- * same as useFolderConfig.submit.
+ * same as useFolderConfig.submit — plus, when the path didn't change (re-drop
+ * of the currently-active uploaded copy), the graph/chat reset trio that
+ * useFolderSwitch would otherwise dispatch on the path change.
  */
 export function useFolderUpload(): UseFolderUploadResult {
-  const { dispatch } = useIngestionState();
+  const { state, dispatch } = useIngestionState();
+  const { dispatch: dispatchGraph } = useGraphState();
+  const { dispatch: dispatchChat } = useChatState();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const currentFolderPath = state.folderPath;
 
   const uploadEntries = useCallback(
-    async (folderName: string, entries: UploadEntry[]) => {
+    async (folderName: string, entries: UploadEntry[]): Promise<boolean> => {
       setUploading(true);
       try {
         const formData = new FormData();
@@ -50,18 +63,28 @@ export function useFolderUpload(): UseFolderUploadResult {
         const body = await res.json();
         if (res.ok) {
           setError(null);
+          if (body.path === currentFolderPath) {
+            // Re-ingest of the already-active copy: the backend re-ingested
+            // and reset the chat session, but folderPath won't change, so
+            // useFolderSwitch's wiring stays silent — dispatch it here.
+            dispatchGraph({ type: "RESET_GRAPH" });
+            dispatchGraph({ type: "GENERATING_START" });
+            dispatchChat({ type: "RESET_SESSION" });
+          }
           dispatch({ type: "RESET_FOLDER", folderPath: body.path });
           dispatch({ type: "STATUS_UPDATE", status: { state: "watching" } });
-        } else {
-          setError(extractErrorMessage(body));
+          return true;
         }
+        setError(extractErrorMessage(body));
+        return false;
       } catch {
         setError("Could not reach the server.");
+        return false;
       } finally {
         setUploading(false);
       }
     },
-    [dispatch]
+    [dispatch, dispatchGraph, dispatchChat, currentFolderPath]
   );
 
   return { uploading, error, uploadEntries };

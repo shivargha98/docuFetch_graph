@@ -1,24 +1,32 @@
 /**
- * Folder-source panel, reworked around drag-and-drop upload and server-side
- * browsing (the free-text path input is gone): renders an active-source line
- * (folder basename + FolderSourceBadge mode chip), the FolderDropZone (drop or
- * pick a local folder -> useFolderUpload), a "Browse server folders…" button
- * opening FolderBrowserModal (Select -> useFolderSwitch's submit, which also
- * tears down graph/chat on a genuine switch), a shared inline error region for
- * whichever flow last failed, and FolderStatusLine. `useIngestionStatus`
- * (Round 3, Issue 5's polling loop) is still called here at the FolderPanel
- * level -- not inside the panel's collapsible content -- so its polling
- * interval survives the content unmounting on collapse (CollapsiblePanel's
- * default, non-forceMount behavior).
+ * Left-side folder-ingestion dock, replacing the folder panel column: a
+ * fixed top-left glass bar showing the active folder at a glance (basename +
+ * FolderSourceBadge mode chip + live FolderStatusLine), which expands into
+ * an overlay card holding the ingest controls — FolderDropZone (drop or pick
+ * a local folder -> useFolderUpload), a "Browse server folders…" button
+ * opening FolderBrowserModal (Select -> useFolderSwitch's submit), and a
+ * shared inline error region for whichever flow last failed. Starts
+ * collapsed (including on app start); auto-collapses when a flow succeeds
+ * (ingestion kicked off — progress reads from the bar's status + the graph's
+ * generating overlay). A failed flow keeps the card open so its error stays
+ * visible; an in-flight upload keeps it open so the drop zone's "Uploading…"
+ * copy stays visible.
  *
- * Source mode ("linked" vs "uploaded") is local state, defaulting to "linked"
- * once the prefill exists, and switched only when a flow *succeeds*: both
- * flows change ingestion state's folderPath exclusively on success, so a
- * pending-mode ref armed before each submit/upload is committed by the
- * folderPath-change effect below.
+ * Owns `useIngestionStatus` (status polling), `useFolderSwitch`, and
+ * `useFolderUpload` at this component's top level — the dock is mounted
+ * once, unconditionally, by the app shell; the card body is CSS-hidden when
+ * collapsed, never unmounted (ChatDock pattern), so polling and in-flight
+ * uploads are unaffected by collapse.
+ *
+ * Source mode ("linked" vs "uploaded") is local state, defaulting to
+ * "linked" once the prefill exists, and switched only when a flow succeeds:
+ * folderPath changes only on success, so a pending-mode ref armed before
+ * each submit/upload is committed by the folderPath-change effect below —
+ * plus the direct same-path success commit in handleUpload (re-drop of the
+ * currently-active folder succeeds WITHOUT a folderPath change).
  */
 import { useEffect, useRef, useState } from "react";
-import { CollapsiblePanel } from "../ui/CollapsiblePanel";
+import { cn } from "../../lib/utils";
 import { FolderBrowserModal } from "./FolderBrowserModal";
 import { FolderDropZone } from "./FolderDropZone";
 import { FolderSourceBadge } from "./FolderSourceBadge";
@@ -32,44 +40,40 @@ import type { UploadEntry } from "../../lib/folderUpload";
 /** How the active folder got here: a linked server path or an uploaded copy. */
 type SourceMode = "linked" | "uploaded";
 
-interface FolderPanelProps {
-  /** Optional extra classes for panel sizing within the app shell. */
-  className?: string;
-}
-
 /** Returns the last path segment of a folder path (handles / and \ separators). */
 function basename(path: string): string {
   const segments = path.split(/[\\/]/).filter(Boolean);
   return segments[segments.length - 1] ?? path;
 }
 
-/** Renders the folder panel with a stable `folder-panel` test id. */
-export function FolderPanel({ className }: FolderPanelProps) {
+/** Renders the folder dock: persistent top-left bar + collapsible ingest card. */
+export function FolderDock() {
   const { error: switchError, submitting, submit } = useFolderSwitch();
   const { uploading, error: uploadError, uploadEntries } = useFolderUpload();
   useIngestionStatus();
   const { state } = useIngestionState();
 
+  const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<SourceMode | null>(null);
   const [browseOpen, setBrowseOpen] = useState(false);
-  // Shared inline error region for both flows. Panel-owned (rather than
+  // Shared inline error region for both flows. Dock-owned (rather than
   // `switchError ?? uploadError`) because each hook clears only its own error
   // on its own success: the region shows whichever flow errored most
-  // recently, and a success in EITHER flow clears it (see the folderPath
-  // effect below).
+  // recently, and a success in EITHER flow clears it.
   const [flowError, setFlowError] = useState<string | null>(null);
   // Armed with the initiating flow's mode right before submit/upload;
-  // committed only when that flow succeeds (see the effect below).
+  // committed only when that flow succeeds.
   const pendingModeRef = useRef<SourceMode | null>(null);
   const previousFolderPathRef = useRef<string | null>(state.folderPath);
 
   // folderPath changes only on a successful prefill/submit/upload, so a
-  // change means a flow succeeded: commit the armed mode and clear the
-  // shared error region regardless of which flow the stale error came from.
+  // change means a flow succeeded: commit the armed mode, clear the shared
+  // error region, and collapse the dock (success = ingestion kicked off).
   useEffect(() => {
     if (state.folderPath !== previousFolderPathRef.current) {
       previousFolderPathRef.current = state.folderPath;
       setFlowError(null);
+      setOpen(false);
       if (pendingModeRef.current !== null) {
         setMode(pendingModeRef.current);
         pendingModeRef.current = null;
@@ -91,10 +95,22 @@ export function FolderPanel({ className }: FolderPanelProps) {
   // Only one flow may be in flight at a time: both entry points gate on this.
   const busy = submitting || uploading;
 
-  /** Uploads a collected folder from the drop zone, arming the "uploaded" mode. */
-  function handleUpload(folderName: string, entries: UploadEntry[]) {
+  /**
+   * Uploads a collected folder from the drop zone, arming the "uploaded"
+   * mode. On success, commits the mode/collapse/error-clear directly rather
+   * than relying only on the folderPath-change effect: re-dropping the
+   * currently-active folder (re-drop to refresh) succeeds WITHOUT a
+   * folderPath change, and must still read as a success.
+   */
+  async function handleUpload(folderName: string, entries: UploadEntry[]) {
     pendingModeRef.current = "uploaded";
-    void uploadEntries(folderName, entries);
+    const succeeded = await uploadEntries(folderName, entries);
+    if (succeeded) {
+      pendingModeRef.current = null;
+      setMode("uploaded");
+      setFlowError(null);
+      setOpen(false);
+    }
   }
 
   /** Submits a browsed server path, closes the modal, and arms the "linked" mode. */
@@ -105,13 +121,26 @@ export function FolderPanel({ className }: FolderPanelProps) {
   }
 
   return (
-    <CollapsiblePanel title="Folder" testId="folder-panel" className={className}>
-      <div className="flex flex-col gap-3">
-        {state.folderPath !== null && (
-          <div className="flex min-w-0 items-center gap-2">
-            <span aria-hidden="true" className="font-mono text-xs text-ion">
-              ▸
-            </span>
+    <div
+      data-testid="folder-dock"
+      className="glass-panel fixed left-4 top-4 z-30 flex w-80 max-w-[calc(100vw-2rem)] flex-col rounded-xl shadow-glow-soft"
+    >
+      <button
+        type="button"
+        data-testid="folder-dock-toggle"
+        aria-expanded={open}
+        aria-label={open ? "Collapse folder panel" : "Expand folder panel"}
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        className={cn(
+          "flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:text-ion",
+          open && "border-b border-glass-border"
+        )}
+      >
+        <span aria-hidden="true" className="font-mono text-xs text-ion">
+          {open ? "▾" : "▸"}
+        </span>
+        {state.folderPath !== null ? (
+          <>
             <span
               data-testid="active-folder-name"
               title={state.folderPath}
@@ -120,8 +149,18 @@ export function FolderPanel({ className }: FolderPanelProps) {
               {basename(state.folderPath)}
             </span>
             {resolvedMode !== null && <FolderSourceBadge mode={resolvedMode} />}
-          </div>
+            <span className="ml-auto shrink-0">
+              <FolderStatusLine status={state.status} />
+            </span>
+          </>
+        ) : (
+          <span className="font-mono text-sm text-text-secondary">No folder — choose one</span>
         )}
+      </button>
+      <div
+        data-testid="folder-dock-body"
+        className={cn("flex-col gap-3 p-4", open ? "flex" : "hidden")}
+      >
         <FolderDropZone onUpload={handleUpload} uploading={uploading} disabled={busy} />
         <button
           type="button"
@@ -136,13 +175,12 @@ export function FolderPanel({ className }: FolderPanelProps) {
             {flowError}
           </p>
         )}
-        <FolderStatusLine status={state.status} />
       </div>
       <FolderBrowserModal
         open={browseOpen}
         onClose={() => setBrowseOpen(false)}
         onSelect={handleBrowseSelect}
       />
-    </CollapsiblePanel>
+    </div>
   );
 }

@@ -92,6 +92,39 @@ describe("useFolderUpload", () => {
     expect(result.current.upload.uploading).toBe(false);
   });
 
+  it("marks the graph as generating and resets it when re-uploading the SAME folder (re-drop to refresh)", async () => {
+    /**
+     * Given the active folder IS the uploaded copy (folderPath already equals
+     * the path the upload returns) — the advertised re-drop-to-refresh flow,
+     * when uploadEntries succeeds,
+     * then `generating` still becomes true and the upload reports success,
+     * even though folderPath never changes (the backend re-ingested and reset
+     * the chat session server-side, so the same-path success must not be
+     * invisible to the UI).
+     */
+    // Prefill resolves to the SAME path the upload will return.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { path: "/srv/uploads/notes" }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { path: "/srv/uploads/notes", status: "watching", mode: "uploaded" })
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderFolderUpload();
+    await waitFor(() => expect(result.current.ingestion.state.folderPath).toBe("/srv/uploads/notes"));
+
+    let succeeded: boolean | undefined;
+    await act(async () => {
+      succeeded = await result.current.upload.uploadEntries("notes", sampleEntries);
+    });
+
+    expect(succeeded).toBe(true);
+    expect(result.current.ingestion.state.folderPath).toBe("/srv/uploads/notes");
+    await waitFor(() => expect(result.current.graph.state.generating).toBe(true));
+    expect(result.current.upload.error).toBeNull();
+  });
+
   it("sends a FormData request with folder_name and each file appended under files using relativePath", async () => {
     const fetchMock = stubFetchSequence(
       jsonResponse(200, { path: "/srv/uploads/notes", status: "watching", mode: "uploaded" })

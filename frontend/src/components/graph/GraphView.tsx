@@ -129,6 +129,25 @@ function easeOutBack(t: number): number {
  * testable against a mocked camera-state input without mounting a real WebGL
  * scene.
  */
+/**
+ * Pure camera-dolly math for the manual zoom buttons: returns the camera
+ * position whose offset from `target` is the current offset scaled by
+ * `factor` (< 1 zooms in, > 1 zooms out). Exported standalone so the zoom
+ * behavior is testable without a real WebGL scene (same pattern as
+ * reprojectNodeToScreen).
+ */
+export function zoomedCameraPosition(
+  position: { x: number; y: number; z: number },
+  target: { x: number; y: number; z: number },
+  factor: number
+): { x: number; y: number; z: number } {
+  return {
+    x: target.x + (position.x - target.x) * factor,
+    y: target.y + (position.y - target.y) * factor,
+    z: target.z + (position.z - target.z) * factor,
+  };
+}
+
 export function reprojectNodeToScreen(
   fg: Pick<ForceGraphMethods<SceneNode, SceneLink>, "graph2ScreenCoords"> | undefined,
   node: { x?: number; y?: number; z?: number } | undefined
@@ -231,10 +250,15 @@ export function GraphView({ className }: GraphViewProps) {
   // distant nodes recede into the scene instead of popping against a flat
   // backdrop. No bloom/postprocessing pipeline is installed this round --
   // node/edge glow is faked via nodeGlow.ts and additive-blended materials.
+  // Density is tuned to the library's auto camera distance (z = cbrt(N)*170,
+  // i.e. 500-800 units for a real graph): FogExp2 attenuates by
+  // e^-(d*density)^2, so 0.0005 leaves ~85% brightness at 800 units and ~60%
+  // at 1500. The original 0.018 fogged everything past ~100 units to pure
+  // void -- an invisible graph on the first real ingestion.
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    fg.scene().fog = new THREE.FogExp2(new THREE.Color(VOID).getHex(), 0.018);
+    fg.scene().fog = new THREE.FogExp2(new THREE.Color(VOID).getHex(), 0.0005);
   }, []);
 
   const graphData = useMemo(() => ({ nodes: state.nodes, links: state.edges }), [state.nodes, state.edges]);
@@ -282,6 +306,39 @@ export function GraphView({ className }: GraphViewProps) {
   useEffect(() => {
     setOverlayScreenPos(null);
   }, [state.selectedNodeId]);
+
+  // Auto-framing (user request, 2026-07-09): frame the whole graph ONCE per
+  // load, on the first engine cool-down with nodes present, so it never
+  // opens half out of view. Deliberately never re-fits after that (the
+  // original fit-while-generating follow-along read as constant unwanted
+  // zooming) — from then on the camera belongs to the user, via orbit
+  // controls and the zoom buttons below. Re-armed whenever the graph
+  // empties (folder switch/reset).
+  const hasAutoFramedRef = useRef(false);
+  useEffect(() => {
+    if (state.nodes.length === 0) hasAutoFramedRef.current = false;
+  }, [state.nodes.length]);
+
+  /** Fits the settled graph into view, once per load. */
+  function handleEngineStop() {
+    if (state.nodes.length === 0 || hasAutoFramedRef.current) return;
+    fgRef.current?.zoomToFit(600, 60);
+    hasAutoFramedRef.current = true;
+  }
+
+  /**
+   * Dollies the camera toward (factor < 1) or away from (factor > 1) the
+   * orbit target by scaling its offset — the manual zoom behind the +/−
+   * buttons in the viewport's top-right corner.
+   */
+  function zoomBy(factor: number) {
+    const fg = fgRef.current;
+    if (!fg) return;
+    const controls = fg.controls() as { target?: THREE.Vector3 };
+    const target = controls.target ?? new THREE.Vector3(0, 0, 0);
+    const next = zoomedCameraPosition(fg.camera().position, target, factor);
+    fg.cameraPosition(next, { x: target.x, y: target.y, z: target.z }, 300);
+  }
 
   // Per-frame reprojection (Issue 8): recomputes the selected node's 2D
   // screen position on every rendered frame (ForceGraph3D's onEngineTick
@@ -423,6 +480,7 @@ export function GraphView({ className }: GraphViewProps) {
           nodeThreeObjectExtend={false}
           nodePositionUpdate={handleNodePositionUpdate}
           onEngineTick={handleEngineTick}
+          onEngineStop={handleEngineStop}
           linkColor={(link) =>
             state.highlightedEdgeIds.includes(edgeHighlightKey(edgeEndpointId(link.source), edgeEndpointId(link.target)))
               ? SYNAPSE
@@ -439,6 +497,26 @@ export function GraphView({ className }: GraphViewProps) {
           onNodeClick={handleNodeClick}
         />
       </GraphSceneErrorBoundary>
+      <div className="absolute right-3 top-3 z-20 flex flex-col gap-1.5">
+        <button
+          type="button"
+          aria-label="Zoom in"
+          data-testid="graph-zoom-in"
+          onClick={() => zoomBy(1 / 1.4)}
+          className="glass-panel h-8 w-8 rounded-md font-mono text-base leading-none text-text-secondary transition-colors hover:border-ion hover:text-ion"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          data-testid="graph-zoom-out"
+          onClick={() => zoomBy(1.4)}
+          className="glass-panel h-8 w-8 rounded-md font-mono text-base leading-none text-text-secondary transition-colors hover:border-ion hover:text-ion"
+        >
+          −
+        </button>
+      </div>
       {state.generating && <GeneratingOverlay nodeCount={state.nodes.length} />}
       {selectedNode && (
         <NodeDetailOverlay

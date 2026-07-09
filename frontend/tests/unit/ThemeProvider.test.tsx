@@ -32,9 +32,9 @@ describe("ThemeProvider", () => {
      */
     render(<App />);
 
-    const folderPanel = screen.getByTestId("folder-panel");
+    const folderDock = screen.getByTestId("folder-dock");
     // Themed surfaces use the shared `glass-panel` class (dark glass/glow tokens).
-    expect(folderPanel.className).toContain("glass-panel");
+    expect(folderDock.className).toContain("glass-panel");
     // No light-theme marker class is ever applied anywhere in the tree.
     expect(document.body.innerHTML).not.toMatch(/light-theme|theme-light/);
     expect(document.documentElement.classList.contains("dark")).toBe(false);

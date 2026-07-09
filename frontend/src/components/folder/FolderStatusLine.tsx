@@ -1,7 +1,8 @@
 /**
- * Presentational status readout for the folder panel: renders the current
- * ingestion status (idle / watching / extracting) as a small monospace line,
- * driven entirely by the `status` prop -- no data fetching of its own.
+ * Presentational status readout for the folder dock's bar: renders the
+ * current ingestion status (idle / watching / extracting) as a small
+ * monospace line, driven entirely by the `status` prop -- no data fetching
+ * of its own.
  * Source: Feature: Live Ingestion Status Display (docs/frontend/features.md), Issue 5.
  */
 import type { IngestionStatus } from "../../state/types";
@@ -26,7 +27,7 @@ export function FolderStatusLine({ status }: FolderStatusLineProps) {
   })();
 
   return (
-    <p className="mt-2 font-mono text-xs text-muted" data-testid="folder-status-line">
+    <p className="font-mono text-xs text-muted" data-testid="folder-status-line">
       {text}
     </p>
   );

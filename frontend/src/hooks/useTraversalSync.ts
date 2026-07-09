@@ -11,7 +11,7 @@
  *
  * Call once, from a component that stays mounted regardless of chat-panel
  * collapse state (see `ChatTranscript.tsx`, which is always mounted thanks to
- * `ChatPanel`'s `forceMount`) -- mirrors `useChatSession`'s own mounting
+ * `ChatDock`'s CSS-hidden-not-unmounted collapse) -- mirrors `useChatSession`'s own mounting
  * rationale so no traversal-step events are missed while the panel is
  * collapsed.
  */

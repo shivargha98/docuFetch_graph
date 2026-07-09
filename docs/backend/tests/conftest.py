@@ -180,7 +180,7 @@ def sample_pdf_file_no_headings(tmp_watch_folder):
 @pytest.fixture
 def mock_extraction_llm(monkeypatch):
     """
-    Provide a mocked OpenRouter extraction client (`OPENROUTER_LLM_MODEL`) whose
+    Provide a mocked extraction client (`ANTHROPIC_MODEL`, Claude Haiku) whose
     response can be configured per-test to return a structured concept +
     typed-relation payload, or a malformed payload for error-handling tests.
 
@@ -262,9 +262,9 @@ def mock_embedding_client(monkeypatch):
 @pytest.fixture
 def mock_traversal_llm(monkeypatch):
     """
-    Provide a mocked OpenRouter traversal-reasoning client (`OPENROUTER_LLM_MODEL`,
-    used in its traversal-reasoning role) whose "next edge to follow" decision
-    can be configured per-test.
+    Provide a mocked traversal-reasoning client (`ANTHROPIC_MODEL`, Claude
+    Haiku, used in its traversal-reasoning role) whose "next edge to follow"
+    decision can be configured per-test.
 
     Monkeypatches `backend.clients.openrouter_client.traversal_next_hop` with a
     fake exposing `.set_response(payload)`/`.set_side_effect(exc)` (same

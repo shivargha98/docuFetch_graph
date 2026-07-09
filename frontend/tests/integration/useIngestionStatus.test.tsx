@@ -23,7 +23,7 @@ import { render, screen, act, cleanup, renderHook, fireEvent } from "@testing-li
 import { mockFetch, resetAllMocks } from "../setup";
 import { useIngestionStatus } from "../../src/hooks/useIngestionStatus";
 import { useIngestionState, AppProviders } from "../../src/state/providers";
-import { FolderPanel } from "../../src/components/folder/FolderPanel";
+import { FolderDock } from "../../src/components/folder/FolderDock";
 
 afterEach(() => {
   resetAllMocks();
@@ -119,14 +119,14 @@ describe("useIngestionStatus", () => {
     expect(result.current.state.status).toEqual({ state: "idle" });
   });
 
-  it("retains ingestion status when the folder panel is collapsed and re-expanded", async () => {
+  it("retains ingestion status when the folder dock is expanded and re-collapsed", async () => {
     /**
-     * Given a current ingestion status is displayed in the real FolderPanel,
-     * when the folder panel is collapsed and then re-expanded,
-     * then the same status is shown after re-expanding, not a reset/blank
-     * state -- because useIngestionStatus is mounted at the FolderPanel
-     * level, which does not unmount on collapse (only the collapsible
-     * content does).
+     * Given a current ingestion status is displayed in the real FolderDock's
+     * bar,
+     * when the dock is expanded and then collapsed again,
+     * then the same status is shown throughout, not a reset/blank state --
+     * because useIngestionStatus is mounted at the FolderDock level and the
+     * bar (status included) is always rendered regardless of collapse.
      *
      * Source: Feature: Live Ingestion Status Display — criterion 3
      */
@@ -145,7 +145,7 @@ describe("useIngestionStatus", () => {
 
     render(
       <AppProviders>
-        <FolderPanel />
+        <FolderDock />
       </AppProviders>
     );
 
@@ -176,8 +176,8 @@ describe("useIngestionStatus", () => {
     });
     expect(screen.getByTestId("folder-status-line")).toHaveTextContent(/extracting/i);
 
-    fireEvent.click(screen.getByRole("button", { name: /collapse folder/i }));
     fireEvent.click(screen.getByRole("button", { name: /expand folder/i }));
+    fireEvent.click(screen.getByRole("button", { name: /collapse folder/i }));
 
     expect(screen.getByTestId("folder-status-line")).toHaveTextContent(/extracting/i);
   });

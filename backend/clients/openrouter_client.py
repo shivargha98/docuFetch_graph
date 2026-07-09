@@ -1,21 +1,31 @@
 """
-OpenRouter API client wrapper. OpenRouter exposes an OpenAI-chat-completions
--compatible endpoint, so this module uses the `openai` SDK pointed at
-OpenRouter's base URL. Four logically distinct roles live here per the
-project's architecture: concept/relation extraction (implemented, Issue 1),
-text embedding (implemented, Issue 3), traversal-hop reasoning (implemented, Issue 10),
-and merge adjudication for entity resolution's ambiguous band (implemented, Issue 5).
+LLM client wrapper for the graph pipeline's per-chunk/per-hop roles. Four
+logically distinct roles live here per the project's architecture:
+concept/relation extraction (Issue 1), text embedding (Issue 3),
+traversal-hop reasoning (Issue 10), and merge adjudication for entity
+resolution's ambiguous band (Issue 5).
+
+The three chat roles (extraction/traversal/adjudication) call the Anthropic
+API directly with ANTHROPIC_MODEL (Claude Haiku) — swapped from OpenRouter
+because the free-tier OpenRouter reasoning model returned empty content for
+these prompts (see docs/backend/backend_context.md). Embeddings stay on
+OpenRouter (OPENROUTER_EMBED_MODEL via the `openai` SDK pointed at
+OpenRouter's base URL) since Anthropic has no embeddings API. The module
+keeps its historical name because every call site and test fixture
+monkeypatches functions on `backend.clients.openrouter_client`.
 """
 import json
 import logging
 
+from anthropic import Anthropic
 from openai import OpenAI
 
-from backend.config import OPENROUTER_API_KEY, OPENROUTER_EMBED_MODEL, OPENROUTER_LLM_MODEL
+from backend.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, OPENROUTER_API_KEY, OPENROUTER_EMBED_MODEL
 
 logger = logging.getLogger(__name__)
 
 _client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
+_anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 _EXTRACTION_SYSTEM_PROMPT = (
     "You extract concepts and typed relations from a piece of text. "
@@ -26,10 +36,61 @@ _EXTRACTION_SYSTEM_PROMPT = (
     "concepts. Only include a relation when the text actually states one."
 )
 
+# Structured-output schemas for the three chat roles: Claude wraps free-form
+# JSON answers in markdown fences, so each call constrains the response via
+# output_config.format instead of trusting the prompt alone — the API then
+# guarantees bare, schema-valid JSON.
+_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "concepts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "description": {"type": "string"}},
+                "required": ["name", "description"],
+                "additionalProperties": False,
+            },
+        },
+        "relations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "relation": {"type": "string"},
+                },
+                "required": ["source", "target", "relation"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["concepts", "relations"],
+    "additionalProperties": False,
+}
+
+_TRAVERSAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "next_node_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "relation": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "required": ["next_node_id", "relation"],
+    "additionalProperties": False,
+}
+
+_ADJUDICATION_SCHEMA = {
+    "type": "object",
+    "properties": {"merge": {"type": "boolean"}},
+    "required": ["merge"],
+    "additionalProperties": False,
+}
+
 
 def extract_concepts(chunk_text: str) -> dict:
     """
-    Ask the OpenRouter extraction model (OPENROUTER_LLM_MODEL) for concept
+    Ask the extraction model (ANTHROPIC_MODEL, Claude Haiku) for concept
     names/descriptions and typed relations found in chunk_text.
 
     Returns a dict shaped like {"concepts": [...], "relations": [...]}. If the
@@ -38,17 +99,17 @@ def extract_concepts(chunk_text: str) -> dict:
     can skip this chunk without crashing the ingestion run.
     """
     try:
-        completion = _client.chat.completions.create(
-            model=OPENROUTER_LLM_MODEL,
-            messages=[
-                {"role": "system", "content": _EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": chunk_text},
-            ],
+        completion = _anthropic_client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=2048,
+            system=_EXTRACTION_SYSTEM_PROMPT,
+            output_config={"format": {"type": "json_schema", "schema": _EXTRACTION_SCHEMA}},
+            messages=[{"role": "user", "content": chunk_text}],
         )
-        content = completion.choices[0].message.content
+        content = completion.content[0].text
         return json.loads(content)
     except Exception:
-        logger.exception("OpenRouter extract_concepts call failed or returned unparseable output")
+        logger.exception("Anthropic extract_concepts call failed or returned unparseable output")
         return {"concepts": [], "relations": []}
 
 
@@ -86,7 +147,7 @@ _TRAVERSAL_SYSTEM_PROMPT = (
 
 def traversal_next_hop(current_node: dict, neighbors: list[dict], query: str) -> dict:
     """
-    Ask the traversal-reasoning model (OPENROUTER_LLM_MODEL, traversal role)
+    Ask the traversal-reasoning model (ANTHROPIC_MODEL, traversal role)
     which of `current_node`'s `neighbors` (if any) is worth visiting next
     during LLM-guided graph traversal, to help answer `query`.
 
@@ -103,20 +164,20 @@ def traversal_next_hop(current_node: dict, neighbors: list[dict], query: str) ->
     """
     try:
         user_content = json.dumps({"query": query, "current_node": current_node, "neighbors": neighbors})
-        completion = _client.chat.completions.create(
-            model=OPENROUTER_LLM_MODEL,
-            messages=[
-                {"role": "system", "content": _TRAVERSAL_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
+        completion = _anthropic_client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=100,
+            system=_TRAVERSAL_SYSTEM_PROMPT,
+            output_config={"format": {"type": "json_schema", "schema": _TRAVERSAL_SCHEMA}},
+            messages=[{"role": "user", "content": user_content}],
         )
-        content = completion.choices[0].message.content
+        content = completion.content[0].text
         decision = json.loads(content)
         next_node_id = decision.get("next_node_id") or None
         relation = decision.get("relation") or None
         return {"next_node_id": next_node_id, "relation": relation}
     except Exception:
-        logger.exception("OpenRouter traversal_next_hop call failed or returned unparseable output")
+        logger.exception("Anthropic traversal_next_hop call failed or returned unparseable output")
         return {"next_node_id": None, "relation": None}
 
 
@@ -131,10 +192,10 @@ _ADJUDICATION_SYSTEM_PROMPT = (
 
 def adjudicate_merge(concept_a: dict, concept_b: dict) -> dict:
     """
-    Ask the OpenRouter model (OPENROUTER_LLM_MODEL) whether concept_a and
-    concept_b (each a dict with "name"/"description" keys) refer to the same
-    real-world thing and should be merged, for entity resolution's ambiguous
-    embedding-similarity band (Issue 5).
+    Ask the adjudication model (ANTHROPIC_MODEL, Claude Haiku) whether
+    concept_a and concept_b (each a dict with "name"/"description" keys)
+    refer to the same real-world thing and should be merged, for entity
+    resolution's ambiguous embedding-similarity band (Issue 5).
 
     Returns a dict shaped like {"merge": bool}. If the API call fails or the
     response isn't valid JSON, the exception is caught and {"merge": False}
@@ -142,18 +203,20 @@ def adjudicate_merge(concept_a: dict, concept_b: dict) -> dict:
     resolution or force an incorrect merge.
     """
     try:
-        completion = _client.chat.completions.create(
-            model=OPENROUTER_LLM_MODEL,
+        completion = _anthropic_client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=50,
+            system=_ADJUDICATION_SYSTEM_PROMPT,
+            output_config={"format": {"type": "json_schema", "schema": _ADJUDICATION_SCHEMA}},
             messages=[
-                {"role": "system", "content": _ADJUDICATION_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": json.dumps({"concept_a": concept_a, "concept_b": concept_b}),
                 },
             ],
         )
-        content = completion.choices[0].message.content
+        content = completion.content[0].text
         return json.loads(content)
     except Exception:
-        logger.exception("OpenRouter adjudicate_merge call failed or returned unparseable output")
+        logger.exception("Anthropic adjudicate_merge call failed or returned unparseable output")
         return {"merge": False}
