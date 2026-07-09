@@ -7,6 +7,7 @@ reuses Round 4's startup.startup()/FolderWatcher machinery to (re)ingest and
 watch it, and resets the chat session so no history carries over from the
 old folder.
 """
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -23,6 +24,7 @@ router = APIRouter()
 
 _current_folder: str = config.WATCH_FOLDER
 _current_watcher: FolderWatcher | None = None
+_current_ingest_thread: threading.Thread | None = None
 
 
 class FolderConfigRequest(BaseModel):
@@ -31,10 +33,48 @@ class FolderConfigRequest(BaseModel):
     path: str
 
 
+def switch_to_folder(new_path: Path) -> None:
+    """
+    Core folder-switch logic shared by POST /api/folder-config and
+    POST /api/ingest/upload: stop the previous watcher, purge the previous
+    folder's graph and vector-store data, re-ingest the new folder via
+    startup.startup() (recording its reconciliation thread for
+    /api/ingest-status), start a fresh watcher, and reset the chat session.
+    """
+    global _current_folder, _current_watcher, _current_ingest_thread
+
+    if _current_watcher is not None:
+        _current_watcher.stop()
+
+    graph_store_path = Path(config.GRAPH_STORE_PATH)
+    hash_store_path = Path(config.HASH_STORE_PATH)
+
+    GraphStore().persist(graph_store_path)
+    vector_store = VectorStore()
+    vector_store.clear_all()
+
+    graph_store, thread = startup.startup(new_path, graph_store_path, hash_store_path, vector_store)
+    _current_ingest_thread = thread
+
+    watcher = FolderWatcher(new_path, graph_store, vector_store, hash_store_path)
+    watcher.start()
+    _current_watcher = watcher
+
+    chat_session.start_new_session(str(new_path))
+    _current_folder = str(new_path)
+
+
 @router.get("/api/folder-config")
 def get_folder_config() -> dict:
     """Return the currently active watched folder as {"path": <folder>}."""
     return {"path": _current_folder}
+
+
+@router.get("/api/ingest-status")
+def get_ingest_status() -> dict:
+    """Report whether a folder switch's ingestion/reconciliation thread is still running."""
+    ingesting = _current_ingest_thread is not None and _current_ingest_thread.is_alive()
+    return {"ingesting": ingesting, "path": _current_folder}
 
 
 @router.post("/api/folder-config")
@@ -43,45 +83,14 @@ def set_folder_config(payload: FolderConfigRequest) -> dict:
     Switch the actively-watched folder to `payload.path`.
 
     Validates the new path exists and is a directory (422 with a reason
-    otherwise), stops the previous FolderWatcher if one is running, purges
-    the previous folder's GraphStore and VectorStore data and starts fresh
-    for the new folder, re-ingests it via startup.startup() (immediate load +
-    background diff-scan reconciliation), starts a new FolderWatcher for it,
-    resets the chat session, and updates the module-level current-folder
-    state.
+    otherwise), then delegates to switch_to_folder() for the core folder-switch
+    logic.
     """
-    global _current_folder, _current_watcher
-
     new_path = Path(payload.path)
     if not new_path.exists():
         raise HTTPException(status_code=422, detail="Path does not exist")
     if not new_path.is_dir():
         raise HTTPException(status_code=422, detail="Path is not a directory")
 
-    if _current_watcher is not None:
-        _current_watcher.stop()
-
-    graph_store_path = Path(config.GRAPH_STORE_PATH)
-    hash_store_path = Path(config.HASH_STORE_PATH)
-
-    # Start from a clean slate for the new folder: persist a fresh, empty
-    # GraphStore over whatever was on disk for the previous folder, so
-    # startup()'s load_persisted_graph() picks up this empty graph rather
-    # than the old folder's data. Likewise, purge the vector store's
-    # collection so the previous folder's embeddings aren't still queryable
-    # alongside the new folder's data (VectorStore() always reopens the same
-    # on-disk collection regardless of which folder is active).
-    GraphStore().persist(graph_store_path)
-    vector_store = VectorStore()
-    vector_store.clear_all()
-
-    graph_store, _thread = startup.startup(new_path, graph_store_path, hash_store_path, vector_store)
-
-    watcher = FolderWatcher(new_path, graph_store, vector_store, hash_store_path)
-    watcher.start()
-    _current_watcher = watcher
-
-    chat_session.start_new_session(str(new_path))
-
-    _current_folder = str(new_path)
+    switch_to_folder(new_path)
     return {"path": _current_folder, "status": "watching"}

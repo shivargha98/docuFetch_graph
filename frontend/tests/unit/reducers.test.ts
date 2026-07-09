@@ -6,7 +6,7 @@
  * Feature: Chat Query Submission; Feature: Live Ingestion Status Display.
  */
 import { describe, it, expect } from "vitest";
-import { graphReducer } from "../../src/state/graphReducer";
+import { graphReducer, initialGraphState } from "../../src/state/graphReducer";
 import { chatReducer } from "../../src/state/chatReducer";
 import { ingestionReducer } from "../../src/state/ingestionReducer";
 import type { GraphState, ChatState, IngestionState } from "../../src/state/types";
@@ -27,6 +27,7 @@ describe("graphReducer", () => {
       highlightedNodeIds: [],
       highlightedEdgeIds: [],
       selectedNodeId: null,
+      generating: false,
     };
     const next = graphReducer(previous, {
       type: "ADD_NODE",
@@ -41,7 +42,8 @@ describe("graphReducer", () => {
     /**
      * Given an existing graph state with nodes and edges,
      * when a RESET_GRAPH action is dispatched,
-     * then the returned state has zero nodes and zero edges.
+     * then the returned state has zero nodes and zero edges, and the
+     * generating flag is left untouched (not reset to false).
      *
      * Source: Feature: Folder Switching & Session Reset — criterion 1
      */
@@ -51,11 +53,28 @@ describe("graphReducer", () => {
       highlightedNodeIds: ["n1"],
       highlightedEdgeIds: [],
       selectedNodeId: "n1",
+      generating: true,
     };
     const next = graphReducer(previous, { type: "RESET_GRAPH" });
 
     expect(next.nodes).toHaveLength(0);
     expect(next.edges).toHaveLength(0);
+    expect(next.generating).toBe(true);
+  });
+
+  it("GENERATING_START sets generating and GENERATING_END clears it", () => {
+    /**
+     * Given the initial graph state (generating: false),
+     * when a GENERATING_START action is dispatched,
+     * then the returned state's generating flag is true;
+     * and when a subsequent GENERATING_END action is dispatched,
+     * then the returned state's generating flag is false again.
+     *
+     * Source: Task 4 — graph-state `generating` flag
+     */
+    const started = graphReducer(initialGraphState, { type: "GENERATING_START" });
+    expect(started.generating).toBe(true);
+    expect(graphReducer(started, { type: "GENERATING_END" }).generating).toBe(false);
   });
 });
 

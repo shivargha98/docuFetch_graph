@@ -10,3 +10,4 @@ chromadb
 pdfplumber
 fpdf2
 watchdog
+python-multipart

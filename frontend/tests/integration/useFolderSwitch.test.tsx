@@ -138,4 +138,41 @@ describe("useFolderSwitch", () => {
     await waitFor(() => expect(result.current.ingestion.state.folderPath).toBe("/new/folder"));
     expect(result.current.ingestion.state.status).toEqual({ state: "watching" });
   });
+
+  it("marks the graph as generating on a genuine folder switch", async () => {
+    /**
+     * Given a folder is already loaded, and fetch is mocked to accept a new
+     * folder path,
+     * when a new valid folder path is submitted (a genuine switch, not the
+     * initial prefill),
+     * then graph state's generating flag is set to true.
+     *
+     * Source: Task 4 — graph-state `generating` flag
+     */
+    stubFetchSequence();
+    const { result } = renderFolderSwitch();
+    await waitFor(() => expect(result.current.folderSwitch.defaultFolder).toBe("/initial/folder"));
+
+    await act(async () => {
+      await result.current.folderSwitch.submit("/new/folder");
+    });
+
+    await waitFor(() => expect(result.current.graph.state.generating).toBe(true));
+  });
+
+  it("does not mark the graph as generating on the initial prefill", async () => {
+    /**
+     * Given no folder is loaded yet,
+     * when useFolderSwitch mounts and the initial GET prefill resolves
+     * (null -> path, not a genuine switch),
+     * then graph state's generating flag stays false.
+     *
+     * Source: Task 4 — graph-state `generating` flag
+     */
+    stubFetchSequence();
+    const { result } = renderFolderSwitch();
+    await waitFor(() => expect(result.current.folderSwitch.defaultFolder).toBe("/initial/folder"));
+
+    expect(result.current.graph.state.generating).toBe(false);
+  });
 });

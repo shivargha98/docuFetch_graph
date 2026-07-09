@@ -40,6 +40,13 @@ export interface GraphState {
   highlightedNodeIds: string[];
   highlightedEdgeIds: string[];
   selectedNodeId: string | null;
+  /**
+   * True while a graph-generating operation (e.g. a genuine folder switch's
+   * refetch) is in flight, so the UI can show a generating overlay. Cleared
+   * by a later poll hook once the new graph is ready. Added for the
+   * folder-selection rework.
+   */
+  generating: boolean;
 }
 
 export type GraphAction =
@@ -68,7 +75,17 @@ export type GraphAction =
    * traversal trail): selection is a single explicit user click target, not
    * an accumulating multi-node trail. Added for Issue 8.
    */
-  | { type: "SELECT_NODE"; nodeId: string | null };
+  | { type: "SELECT_NODE"; nodeId: string | null }
+  /**
+   * Marks the graph as currently (re)generating, e.g. while a genuine folder
+   * switch's new graph is being fetched. Added for the folder-selection rework.
+   */
+  | { type: "GENERATING_START" }
+  /**
+   * Clears the generating flag once the graph-generating operation completes.
+   * Added for the folder-selection rework.
+   */
+  | { type: "GENERATING_END" };
 
 // ---------------------------------------------------------------------------
 // Chat slice

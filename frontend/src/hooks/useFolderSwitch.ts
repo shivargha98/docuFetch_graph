@@ -17,7 +17,9 @@ import { useGraphState, useChatState, useIngestionState } from "../state/provide
  * and a failed submit leaves `folderPath` unchanged, so neither trips this).
  * On a genuine switch, dispatches RESET_GRAPH and RESET_SESSION so the old
  * folder's graph/transcript clear immediately, before/as useGraphData's own
- * folderPath-keyed refetch completes.
+ * folderPath-keyed refetch completes; also dispatches GENERATING_START so the
+ * UI can show a generating overlay while the new folder's graph loads (added
+ * for the folder-selection rework).
  */
 export function useFolderSwitch(): UseFolderConfigResult {
   const folderConfig = useFolderConfig();
@@ -32,6 +34,7 @@ export function useFolderSwitch(): UseFolderConfigResult {
     const previous = previousFolderPathRef.current;
     if (previous !== null && folderPath !== null && folderPath !== previous) {
       dispatchGraph({ type: "RESET_GRAPH" });
+      dispatchGraph({ type: "GENERATING_START" });
       dispatchChat({ type: "RESET_SESSION" });
     }
     previousFolderPathRef.current = folderPath;

@@ -109,3 +109,19 @@ User steer: UI must look absolutely futuristic, minimum the graph visualization.
 3. If concurrent chat queries are ever allowed, `useChatSession.ts` needs to thread a real `queryId` through `ADD_MESSAGE` — the current trace/message pairing in `ChatTranscript.tsx` is positional and only holds under the current one-query-at-a-time constraint.
 4. Consider a dedicated in-scene "selected" glow distinct from the HUD overlay itself (currently the only selection feedback) — flagged by worker-graphfx as a real gap, not a bug.
 5. `useFolderConfig`'s failed initial GET /api/folder-config is silently swallowed (blank input, no error UI) — no acceptance criterion ever covered this path across 4 rounds; worth a small dedicated fix if it matters in practice.
+
+## Folder-selection rework + generating overlay (2026-07-09)
+
+Frontend half of `docs/superpowers/plans/2026-07-06-folder-selection-rework.md`. The folder panel's absolute-path text input is gone; folder selection is now a drag-and-drop zone + a server-side browser modal, and the graph viewport shows a live "generating" overlay during ingestion.
+
+**New endpoints consumed:** `GET /api/browse` (browser modal), `POST /api/ingest/upload` (drop/picker upload), `GET /api/ingest-status` (generating-overlay poll — real backend thread-liveness signal, NOT a node-count heuristic).
+
+**Deleted:** `FolderPathInput.tsx` + its unit test (the only intentional deletions). `useFolderConfig`/`useFolderSwitch` remain — the browse modal's Select still submits through the existing folder-config flow.
+
+**New pieces:**
+- `lib/folderUpload.ts` (pure): `collectFilesFromDataTransfer` (recursive `webkitGetAsEntry` walk; returns `{folderName, entries}`, empty for non-directory drops), `collectFilesFromInput` (`webkitRelativePath` mapping), `filterSupported` (.md/.txt/.pdf, case-insensitive). Relative paths are rooted INSIDE the dropped folder; the folder's own name travels separately as `folder_name`.
+- `useFolderUpload` — FormData POST to `/api/ingest/upload`; success dispatches `RESET_FOLDER` + `STATUS_UPDATE watching`, which makes `useFolderSwitch` fire `RESET_GRAPH`/`RESET_SESSION`/`GENERATING_START` exactly as a browse switch does.
+- `useBrowse` + `FolderBrowserModal` (glass HUD modal: path readout, dir list, Up/Home, Windows drive chips).
+- `FolderDropZone` + `FolderSourceBadge`; `FolderPanel` tracks `mode: "linked" | "uploaded"` locally — badge semantics: **"Linked folder"** (browse/prefill: the watcher tracks the real folder live) vs **"Uploaded copy · re-drop to refresh"** (upload: the watcher watches the server-side copy; re-dropping is the refresh mechanism — accepted tradeoff, the browser can never reveal a dropped folder's absolute path).
+- Graph state: `generating: boolean` + `GENERATING_START`/`GENERATING_END`; set on genuine folder switch, cleared by `useGeneratingStatus` (1500ms poll of `/api/ingest-status`, mounted in `GraphView` since the center pane never unmounts).
+- `GeneratingOverlay` (Task 9, frontend-design skill): pointer-events-none scanning overlay — sonar ping of expanding ion rings (signature element), deterministic drifting ion/synapse particles, `:: Ingesting folder` mono eyebrow, "Generating graph" headline, live tabular-nums "`{n}` concepts discovered" counter, edge vignette so materializing nodes stay visible. Keyframes live in `index.css` ("Generating overlay animations" section), disabled under `prefers-reduced-motion`. Empty-state hint is suppressed while generating and now reads "No graph loaded yet — drop a folder to begin."

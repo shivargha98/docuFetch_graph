@@ -27,7 +27,7 @@ export interface UseFolderConfigResult {
  * response body, covering both the endpoint's own `{"detail": "..."}` shape
  * and FastAPI's validation-error `{"detail": [{"msg": "..."}]}` array shape.
  */
-function extractErrorMessage(body: unknown): string {
+export function extractErrorMessage(body: unknown): string {
   if (body && typeof body === "object" && "detail" in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;

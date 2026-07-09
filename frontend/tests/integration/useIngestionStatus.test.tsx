@@ -150,12 +150,13 @@ describe("useIngestionStatus", () => {
     );
 
     // Flush the mocked GET /api/folder-config prefill's microtask chain
-    // (no real timer involved) so the input reflects the loaded folder.
+    // (no real timer involved) so the active-source line reflects the loaded
+    // folder (the panel shows its basename, with the full path as title).
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByDisplayValue("/watched/folder")).toBeInTheDocument();
+    expect(screen.getByTestId("active-folder-name")).toHaveAttribute("title", "/watched/folder");
 
     mockFetch({
       folderConfig: { status: 200, body: { path: "/watched/folder" } },

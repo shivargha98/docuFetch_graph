@@ -14,6 +14,31 @@ the corresponding backend module exists.
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _store_paths_in_tmp(tmp_path, monkeypatch):
+    """
+    Suite-wide guard: point every persisted-store path at a per-test temp dir
+    so no test can leak graph_store.json/hash_store.json/chroma_db into the
+    repo root (the .env/config defaults). Two kinds of write site exist: code
+    reading `config.*` at call time (e.g. config_routes.switch_to_folder),
+    and modules that imported a path by name at import time
+    (pipeline.GRAPH_STORE_PATH, watcher.GRAPH_STORE_PATH,
+    vector_store.store.CHROMA_DB_PATH) — all are patched. Tests that need a
+    specific path still monkeypatch their own on top of this.
+    """
+    from backend import config
+    from backend.ingestion import pipeline as pipeline_module
+    from backend.ingestion import watcher as watcher_module
+    from backend.vector_store import store as vector_store_module
+
+    monkeypatch.setattr(config, "GRAPH_STORE_PATH", str(tmp_path / "graph_store.json"))
+    monkeypatch.setattr(config, "HASH_STORE_PATH", str(tmp_path / "hash_store.json"))
+    monkeypatch.setattr(config, "CHROMA_DB_PATH", str(tmp_path / "chroma_db"))
+    monkeypatch.setattr(pipeline_module, "GRAPH_STORE_PATH", str(tmp_path / "graph_store.json"))
+    monkeypatch.setattr(watcher_module, "GRAPH_STORE_PATH", str(tmp_path / "graph_store.json"))
+    monkeypatch.setattr(vector_store_module, "CHROMA_DB_PATH", str(tmp_path / "chroma_db"))
+
+
 @pytest.fixture
 def tmp_watch_folder(tmp_path):
     """

@@ -13,6 +13,7 @@ load_dotenv()
 WATCH_FOLDER = os.getenv("WATCH_FOLDER")
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
 HASH_STORE_PATH = os.getenv("HASH_STORE_PATH", "./hash_store.json")
+UPLOADS_PATH = os.getenv("UPLOADS_PATH", "./uploads")
 
 # Round 1 decision: graph JSON persistence path, sibling to HASH_STORE_PATH.
 # Overridable via a GRAPH_STORE_PATH env var, defaulting alongside the other

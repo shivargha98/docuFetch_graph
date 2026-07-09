@@ -2,7 +2,7 @@
 # Auth: Claude Code authenticates via your claude.ai Pro account on first run.
 # Credentials are stored in ~/.claude and persisted via a volume mount.
 
-FROM node:20-slim
+FROM node:22-slim
 
 # Install minimal utilities (python3 is required by the hookify plugin's hooks)
 RUN apt-get update && apt-get install -y \

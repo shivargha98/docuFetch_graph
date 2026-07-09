@@ -60,16 +60,27 @@
  *   as the camera orbits/zooms. Rendered as a sibling of
  *   `GraphSceneErrorBoundary` (not inside it) since the overlay is plain
  *   DOM/CSS with no WebGL dependency.
+ *
+ * Folder-selection rework (Task 9) addition: while `state.generating` is set
+ * (a genuine folder switch/upload kicked off ingestion), `<GeneratingOverlay>`
+ * renders over the scene (same plain-DOM sibling pattern as
+ * NodeDetailOverlay) with the live node count, and `useGeneratingStatus()` --
+ * called here since the center pane never unmounts -- polls
+ * /api/ingest-status to clear the flag when the backend goes idle. The
+ * empty-state hint is suppressed while generating so the two messages never
+ * stack.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraphMethods, type NodeObject, type LinkObject } from "react-force-graph-3d";
 import * as THREE from "three";
 import { useGraphState } from "../../state/providers";
 import { useGraphData } from "../../hooks/useGraphData";
+import { useGeneratingStatus } from "../../hooks/useGeneratingStatus";
 import { useNodeFadeIn, FADE_DURATION_MS } from "../../hooks/useNodeFadeIn";
 import { relationTypeToEdgeStyle } from "../../lib/edgeStyles";
 import { buildNodeGlowObject } from "./nodeGlow";
 import { GraphSceneErrorBoundary } from "./GraphSceneErrorBoundary";
+import { GeneratingOverlay } from "./GeneratingOverlay";
 import { NodeDetailOverlay, type LinkedConcept } from "./NodeDetailOverlay";
 import { VOID, SYNAPSE } from "./sceneColors";
 import type { GraphNode, GraphEdge } from "../../state/types";
@@ -195,6 +206,7 @@ function buildHighlightSprite(isLatest: boolean): THREE.Sprite {
 /** Renders the 3D concept-graph scene with a stable `graph-view` test id. */
 export function GraphView({ className }: GraphViewProps) {
   useGraphData();
+  useGeneratingStatus();
   const fadeMapRef = useNodeFadeIn();
   const { state, dispatch } = useGraphState();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -396,8 +408,8 @@ export function GraphView({ className }: GraphViewProps) {
       <GraphSceneErrorBoundary
         fallback={<p className={OVERLAY_TEXT_CLASS}>3D graph rendering isn't available in this browser.</p>}
       >
-        {state.nodes.length === 0 && (
-          <p className={OVERLAY_TEXT_CLASS}>No graph loaded yet — point docuFetch at a folder to begin.</p>
+        {state.nodes.length === 0 && !state.generating && (
+          <p className={OVERLAY_TEXT_CLASS}>No graph loaded yet — drop a folder to begin.</p>
         )}
         <ForceGraph3D
           ref={fgRef}
@@ -427,6 +439,7 @@ export function GraphView({ className }: GraphViewProps) {
           onNodeClick={handleNodeClick}
         />
       </GraphSceneErrorBoundary>
+      {state.generating && <GeneratingOverlay nodeCount={state.nodes.length} />}
       {selectedNode && (
         <NodeDetailOverlay
           node={selectedNode}

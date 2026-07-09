@@ -12,6 +12,7 @@ export const initialGraphState: GraphState = {
   highlightedNodeIds: [],
   highlightedEdgeIds: [],
   selectedNodeId: null,
+  generating: false,
 };
 
 /**
@@ -27,6 +28,8 @@ export const initialGraphState: GraphState = {
  * - ADD_EDGES appends newly-discovered edges without replacing the existing
  *   list (Issue 7).
  * - SELECT_NODE sets or clears (null) the node-detail HUD overlay's target (Issue 8).
+ * - GENERATING_START/GENERATING_END set/clear the generating flag, leaving
+ *   the rest of the state untouched (added for the folder-selection rework).
  */
 export function graphReducer(state: GraphState, action: GraphAction): GraphState {
   switch (action.type) {
@@ -35,7 +38,7 @@ export function graphReducer(state: GraphState, action: GraphAction): GraphState
     case "SET_GRAPH":
       return { ...state, nodes: action.nodes, edges: action.edges };
     case "RESET_GRAPH":
-      return { ...initialGraphState };
+      return { ...initialGraphState, generating: state.generating };
     case "HIGHLIGHT_NODE": {
       const highlightedNodeIds = state.highlightedNodeIds.includes(action.nodeId)
         ? state.highlightedNodeIds
@@ -52,6 +55,10 @@ export function graphReducer(state: GraphState, action: GraphAction): GraphState
       return { ...state, edges: [...state.edges, ...action.edges] };
     case "SELECT_NODE":
       return { ...state, selectedNodeId: action.nodeId };
+    case "GENERATING_START":
+      return { ...state, generating: true };
+    case "GENERATING_END":
+      return { ...state, generating: false };
     default:
       return state;
   }

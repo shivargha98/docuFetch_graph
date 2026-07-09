@@ -71,3 +71,57 @@ body {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
+
+/**
+ * Generating overlay animations (GeneratingOverlay.tsx): the "graph is
+ * generating" scanning treatment shown on the graph viewport during
+ * ingestion. Sonar rings expand + fade from the viewport center; particles
+ * drift slowly upward; the vignette keeps overlay text legible while leaving
+ * the center clear so materializing nodes stay visible beneath.
+ */
+@keyframes generating-ping {
+  from {
+    transform: translate(-50%, -50%) scale(0.08);
+    opacity: 0.75;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes generating-drift {
+  0% {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.8;
+  }
+  80% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translateY(-46px);
+    opacity: 0;
+  }
+}
+
+.generating-ring {
+  animation: generating-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.generating-particle {
+  animation: generating-drift 7s linear infinite;
+}
+
+.generating-vignette {
+  background: radial-gradient(ellipse at center, transparent 0%, transparent 45%, rgba(7, 8, 18, 0.55) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generating-ring,
+  .generating-particle {
+    animation: none;
+  }
+}

@@ -6,7 +6,9 @@ __pycache__/
 # docuFetch Graph backend runtime-generated data (graph_store/hash_store/chroma default paths)
 /graph_store.json
 /hash_store.json
+node_modules/
 /chroma_db/
+/uploads/
 
 # C extensions
 *.so
