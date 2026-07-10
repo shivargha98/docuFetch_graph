@@ -236,3 +236,37 @@ def test_threshold_boundary_behavior_is_parameterized_not_hardcoded(entity_resol
     Source: Issue 5 — caveat (open question: exact threshold values)
     """
     raise NotImplementedError
+
+
+def test_embedding_tier_honors_the_adjudication_cap(entity_resolution_thresholds, mock_adjudication_llm):
+    """
+    Given three ambiguous pairs but a cap of one adjudication,
+    when the embedding tier runs,
+    only one LLM call is made and the un-adjudicated pairs are left
+    unmerged — bounded ingestion beats perfect deduplication.
+    """
+    store = _make_graph_store(
+        [
+            ("concept_a", "Alpha", "First concept.", ["a.md"]),
+            ("concept_b", "Beta", "Second concept.", ["b.md"]),
+            ("concept_c", "Gamma", "Third concept.", ["c.md"]),
+        ]
+    )
+    # All three pairwise similarities are identical (cos = 0.8), inside the
+    # injected [0.75, 0.90) ambiguous band.
+    vectors = {"Alpha": [1.0, 0.0], "Beta": [0.8, 0.6], "Gamma": [1.0, 0.0]}
+    # Pair (Alpha, Gamma) has cos 1.0 -> auto-merge; make Gamma distinct instead.
+    vectors["Gamma"] = [0.8, -0.6]
+    mock_adjudication_llm.set_response({"merge": False})
+
+    with patch("backend.clients.openrouter_client.embed_text", side_effect=_embed_by_name(vectors)):
+        merges = resolver.resolve_embedding_tier(
+            store,
+            merge_threshold=entity_resolution_thresholds["merge_threshold"],
+            ambiguous_low=entity_resolution_thresholds["ambiguous_low"],
+            max_adjudications=1,
+        )
+
+    assert len(mock_adjudication_llm.calls) == 1
+    assert merges == []
+    assert store.graph.number_of_nodes() == 3

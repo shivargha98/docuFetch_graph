@@ -374,6 +374,11 @@ export function GraphView({ className }: GraphViewProps) {
           width={size.width || undefined}
           height={size.height || undefined}
           backgroundColor={VOID}
+          // The library pauses its redraw loop once the physics engine
+          // idles — which froze the custom hover labels and left stale
+          // pointer hitboxes for late-added nodes (some unhoverable /
+          // unclickable). Continuous canvas repaint is cheap at this scale.
+          autoPauseRedraw={false}
           nodeLabel={() => ""}
           onNodeHover={(node) => {
             hoveredNodeIdRef.current = node ? String(node.id ?? "") : null;

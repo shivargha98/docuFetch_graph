@@ -10,6 +10,9 @@ import logging
 import threading
 from pathlib import Path
 
+from backend import config
+from backend.concurrency.lock import GRAPH_LOCK
+from backend.entity_resolution import resolver
 from backend.graph_store.store import GraphStore
 from backend.ingestion.hash_store import load_hash_store
 from backend.ingestion.watcher import process_file_change, process_file_deletion
@@ -39,11 +42,27 @@ def diff_scan(watch_folder: Path, graph_store: GraphStore, vector_store, hash_st
     empty graph with no visible cause.
     """
     current_files = [path for path in watch_folder.rglob("*") if path.is_file()]
+    changed_any = False
     for path in current_files:
         try:
-            process_file_change(path, graph_store, vector_store, hash_store_path)
+            # resolve=False: entity resolution over the whole graph is O(n²)
+            # pairs with an LLM call per ambiguous pair — running it after
+            # EVERY file multiplied minutes of API grind (while holding
+            # GRAPH_LOCK, starving chat queries). One pass at the end below.
+            changed = process_file_change(path, graph_store, vector_store, hash_store_path, resolve=False)
+            changed_any = changed_any or changed
         except Exception:
             logger.exception("diff_scan: skipping %s after an ingestion error", path)
+
+    if changed_any:
+        try:
+            # resolve_all takes GRAPH_LOCK internally around each mutation
+            # (fine-grained locking) — holding it out here would deadlock.
+            resolver.resolve_all(graph_store)
+            with GRAPH_LOCK:
+                graph_store.persist(Path(config.GRAPH_STORE_PATH))
+        except Exception:
+            logger.exception("diff_scan: entity resolution failed; graph left unmerged")
 
     current_paths = {str(path) for path in current_files}
     hashes = load_hash_store(hash_store_path)

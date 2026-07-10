@@ -341,6 +341,37 @@ def test_startup_loads_persisted_graph_immediately_then_reconciles_offline_chang
     assert str(unchanged_file) in hashes
 
 
+def test_diff_scan_runs_entity_resolution_once_for_the_whole_batch(tmp_watch_folder, monkeypatch):
+    """
+    Given several files to ingest,
+    when the startup diff-scan runs,
+    entity resolution executes exactly ONCE at the end — not once per file:
+    whole-graph resolution is O(n^2) pairs with an LLM adjudication call per
+    ambiguous pair, so per-file passes multiplied minutes of API grind while
+    holding GRAPH_LOCK (starving chat queries).
+    """
+    from backend.entity_resolution import resolver as resolver_module
+    from backend.ingestion import startup as startup_module
+    from backend.ingestion import watcher as watcher_module
+
+    (tmp_watch_folder / "one.md").write_text("# One", encoding="utf-8")
+    (tmp_watch_folder / "two.md").write_text("# Two", encoding="utf-8")
+
+    monkeypatch.setattr(watcher_module.pipeline, "ingest_file", lambda *a, **k: None)
+    resolve_calls = []
+    monkeypatch.setattr(resolver_module, "resolve_all", lambda *a, **k: resolve_calls.append(1))
+    persisted = []
+    graph_store = GraphStore()
+    monkeypatch.setattr(graph_store, "persist", lambda path: persisted.append(path))
+
+    startup_module.diff_scan(
+        tmp_watch_folder, graph_store, None, tmp_watch_folder.parent / "hash.json"
+    )
+
+    assert len(resolve_calls) == 1
+    assert len(persisted) == 1
+
+
 def test_diff_scan_survives_a_file_that_fails_to_ingest(tmp_watch_folder, monkeypatch):
     """
     Given one file in the folder whose ingestion raises (LLM/embedding
@@ -361,7 +392,7 @@ def test_diff_scan_survives_a_file_that_fails_to_ingest(tmp_watch_folder, monkey
 
     processed = []
 
-    def fake_process_file_change(path, graph_store, vector_store, hash_store_path):
+    def fake_process_file_change(path, graph_store, vector_store, hash_store_path, resolve=True):
         if path.name == "bad.md":
             raise RuntimeError("simulated embedding failure")
         processed.append(path.name)

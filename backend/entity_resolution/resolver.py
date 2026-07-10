@@ -18,11 +18,19 @@ already unions source_files, redirects edges, and removes the merged-away
 node (see backend/graph_store/store.py) - this module only decides *which*
 pairs to merge.
 """
+import logging
 import math
 
 from backend.clients import openrouter_client
-from backend.config import ENTITY_RESOLUTION_AMBIGUOUS_LOW, ENTITY_RESOLUTION_MERGE_THRESHOLD
+from backend.concurrency.lock import GRAPH_LOCK
+from backend.config import (
+    ENTITY_RESOLUTION_AMBIGUOUS_LOW,
+    ENTITY_RESOLUTION_MAX_ADJUDICATIONS,
+    ENTITY_RESOLUTION_MERGE_THRESHOLD,
+)
 from backend.graph_store.store import GraphStore
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_name(name: str) -> str:
@@ -82,9 +90,10 @@ def resolve_string_tier(graph_store: GraphStore) -> list[tuple[str, str]]:
     via `graph_store.merge_nodes(keep_id, merge_id)`. Returns the list of
     (keep_id, merge_id) merges actually applied.
     """
-    merges = find_string_tier_merges(graph_store)
-    for keep_id, merge_id in merges:
-        graph_store.merge_nodes(keep_id, merge_id)
+    with GRAPH_LOCK:
+        merges = find_string_tier_merges(graph_store)
+        for keep_id, merge_id in merges:
+            graph_store.merge_nodes(keep_id, merge_id)
     return merges
 
 
@@ -107,6 +116,7 @@ def resolve_embedding_tier(
     graph_store: GraphStore,
     merge_threshold: float = ENTITY_RESOLUTION_MERGE_THRESHOLD,
     ambiguous_low: float = ENTITY_RESOLUTION_AMBIGUOUS_LOW,
+    max_adjudications: int = ENTITY_RESOLUTION_MAX_ADJUDICATIONS,
 ) -> list[tuple[str, str]]:
     """
     For every remaining pair of nodes currently in `graph_store` (intended to
@@ -121,12 +131,21 @@ def resolve_embedding_tier(
         only if it returns {"merge": True}.
       - similarity < ambiguous_low: leave separate, no LLM call.
 
+    At most `max_adjudications` LLM calls are made per pass (each costs ~1s
+    of wall clock while GRAPH_LOCK is held); ambiguous pairs beyond the cap
+    are left unmerged and the overflow is logged — bounded ingestion beats
+    perfect deduplication.
+
     Returns the list of (keep_id, merge_id) merges actually applied. Each
     node is merged away at most once per call (mirrors
     find_string_tier_merges's rule) so it isn't compared again after being
     removed from the graph.
     """
-    nodes = list(graph_store.graph.nodes(data=True))
+    # Snapshot under the lock (cheap); embeddings (local, cached) and LLM
+    # adjudications run OUTSIDE it so concurrent chat queries interleave
+    # freely — only each individual merge mutation below re-takes the lock.
+    with GRAPH_LOCK:
+        nodes = list(graph_store.graph.nodes(data=True))
     embeddings = {
         node_id: openrouter_client.embed_text(f"{data['name']}: {data['description']}")
         for node_id, data in nodes
@@ -134,6 +153,8 @@ def resolve_embedding_tier(
 
     merges: list[tuple[str, str]] = []
     already_merged: set[str] = set()
+    adjudications = 0
+    skipped_over_cap = 0
 
     for i in range(len(nodes)):
         keep_id, keep_data = nodes[i]
@@ -150,14 +171,28 @@ def resolve_embedding_tier(
             if similarity >= merge_threshold:
                 should_merge = True
             elif ambiguous_low <= similarity < merge_threshold:
+                if adjudications >= max_adjudications:
+                    skipped_over_cap += 1
+                    continue
+                adjudications += 1
                 decision = openrouter_client.adjudicate_merge(keep_data, merge_data)
                 should_merge = bool(decision.get("merge", False))
 
             if should_merge:
-                graph_store.merge_nodes(keep_id, merge_id)
-                merges.append((keep_id, merge_id))
+                with GRAPH_LOCK:
+                    # Guarded: the snapshot above may be stale if a deletion
+                    # event removed a node while we were adjudicating.
+                    if graph_store.graph.has_node(keep_id) and graph_store.graph.has_node(merge_id):
+                        graph_store.merge_nodes(keep_id, merge_id)
+                        merges.append((keep_id, merge_id))
                 already_merged.add(merge_id)
 
+    if skipped_over_cap:
+        logger.warning(
+            "resolve_embedding_tier: adjudication cap (%d) reached; %d ambiguous pairs left unmerged",
+            max_adjudications,
+            skipped_over_cap,
+        )
     return merges
 
 

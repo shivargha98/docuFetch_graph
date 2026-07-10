@@ -33,8 +33,16 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL")
 # to Haiku adjudication; below stays unmerged. (Each embedding model has its
 # own similarity distribution — re-measure these whenever EMBED_MODEL
 # changes; earlier tunings: Gemini 0.85/0.68, OpenRouter 0.90/0.75.)
+# ambiguous_low sits at 0.84 (not lower): measured same-concept pairs never
+# scored below ~0.876, and every ambiguous pair costs a Haiku call.
 ENTITY_RESOLUTION_MERGE_THRESHOLD = float(os.getenv("ENTITY_RESOLUTION_MERGE_THRESHOLD", "0.90"))
-ENTITY_RESOLUTION_AMBIGUOUS_LOW = float(os.getenv("ENTITY_RESOLUTION_AMBIGUOUS_LOW", "0.78"))
+ENTITY_RESOLUTION_AMBIGUOUS_LOW = float(os.getenv("ENTITY_RESOLUTION_AMBIGUOUS_LOW", "0.84"))
+# Hard ceiling on LLM adjudication calls per resolution pass: a large batch
+# ingest can surface hundreds of ambiguous pairs, each costing a ~1s Haiku
+# call while GRAPH_LOCK is held (measured live: a 6-file ingest piled up 726
+# raw nodes before its single resolution pass). Pairs beyond the cap are
+# left unmerged (logged) rather than stalling ingestion for tens of minutes.
+ENTITY_RESOLUTION_MAX_ADJUDICATIONS = int(os.getenv("ENTITY_RESOLUTION_MAX_ADJUDICATIONS", "150"))
 # Chroma squared-L2 distance over unit-normalized embeddings (= 2 - 2*cos_sim,
 # range 0-4, lower = more similar). Tuned empirically against
 # BAAI/bge-small-en-v1.5 (2026-07-10): relevant queries' nearest-chunk

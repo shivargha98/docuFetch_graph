@@ -21,50 +21,69 @@ def _make_vector_store_stub():
     return stub
 
 
-def test_lock_is_acquired_before_write_and_released_after(tmp_path, monkeypatch):
+def test_extraction_runs_unlocked_and_mutations_run_locked(tmp_path, monkeypatch):
     """
-    Given an ingestion write operation (process_file_change) and GRAPH_LOCK
-    wrapping graph_store + vector_store access,
-    when the write operation executes,
-    the lock should be held for the duration of the write and released
-    afterward.
+    Given the fine-grained locking model (2026-07-10): the slow per-chunk
+    LLM extraction must run WITHOUT GRAPH_LOCK (so concurrent queries aren't
+    starved for the file's whole duration), while each graph mutation and
+    the final persist must hold it.
 
-    Source: Feature: Ingestion/Query Lock Guarding — criterion 1 (unit-level
-    lock behavior); Issue 17 — criterion 1
+    Exercised at the pipeline level, where the lock now lives. Deletion
+    cleanup (fast, no LLM) still holds the lock for its whole operation.
     """
+    from backend.ingestion import pipeline
+    from backend.ingestion.chunking import Chunk
+
     sample_file = tmp_path / "sample.txt"
     sample_file.write_text("hello world", encoding="utf-8")
-    hash_store_path = tmp_path / "hashes.json"
+
+    observed = {}
+
+    monkeypatch.setattr(
+        "backend.ingestion.pipeline.load_file", lambda path: "doc"
+    )
+    monkeypatch.setattr(
+        "backend.ingestion.pipeline.chunk_document",
+        lambda document: [Chunk(chunk_id="c1", text="hello", source_file=str(sample_file), section=None)],
+    )
+
+    def fake_extract(chunk):
+        observed["locked_during_extraction"] = GRAPH_LOCK.locked()
+        return {"concepts": [], "relations": []}
+
+    monkeypatch.setattr("backend.ingestion.pipeline.extract_from_chunk", fake_extract)
+
     graph_store = GraphStore()
+
+    def fake_add(chunk, result):
+        observed["locked_during_mutation"] = GRAPH_LOCK.locked()
+        return []
+
+    monkeypatch.setattr(graph_store, "add_extraction_result", fake_add)
+    monkeypatch.setattr(
+        graph_store, "persist", lambda path: observed.__setitem__("locked_during_persist", GRAPH_LOCK.locked())
+    )
+
+    assert not GRAPH_LOCK.locked()
+    pipeline.ingest_file(sample_file, graph_store)
+    assert observed["locked_during_extraction"] is False
+    assert observed["locked_during_mutation"] is True
+    assert observed["locked_during_persist"] is True
+    assert not GRAPH_LOCK.locked()
+
+    # Deletion cleanup still holds the lock for its whole (fast) operation.
     vector_store = _make_vector_store_stub()
-
-    observed_locked_state = {}
-
-    def fake_ingest_file(path, gs, vector_store=None):
-        """Record whether GRAPH_LOCK is held while pipeline.ingest_file would normally run."""
-        observed_locked_state["locked_during_write"] = GRAPH_LOCK.locked()
-        return None
-
-    monkeypatch.setattr("backend.ingestion.watcher.pipeline.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("backend.ingestion.watcher.resolver.resolve_all", lambda gs: None)
-
-    assert not GRAPH_LOCK.locked()
-    process_file_change(sample_file, graph_store, vector_store, hash_store_path)
-    assert observed_locked_state["locked_during_write"] is True
-    assert not GRAPH_LOCK.locked()
-
-    # Also exercise process_file_deletion's lock usage the same way.
-    observed_locked_state.clear()
+    hash_store_path = tmp_path / "hashes.json"
+    deletion_observed = {}
 
     def fake_remove_file(source_file):
-        """Record whether GRAPH_LOCK is held while graph_store.remove_file would normally run."""
-        observed_locked_state["locked_during_delete"] = GRAPH_LOCK.locked()
+        deletion_observed["locked_during_delete"] = GRAPH_LOCK.locked()
 
     monkeypatch.setattr(graph_store, "remove_file", fake_remove_file)
     monkeypatch.setattr(graph_store, "persist", lambda path: None)
 
     process_file_deletion(sample_file, graph_store, vector_store, hash_store_path)
-    assert observed_locked_state["locked_during_delete"] is True
+    assert deletion_observed["locked_during_delete"] is True
     assert not GRAPH_LOCK.locked()
 
 

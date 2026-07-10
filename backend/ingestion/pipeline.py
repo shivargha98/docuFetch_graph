@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from backend.concurrency.lock import GRAPH_LOCK
 from backend.config import GRAPH_STORE_PATH
 from backend.extraction.extractor import extract_from_chunk
 from backend.graph_store.store import GraphStore
@@ -44,6 +45,12 @@ def ingest_file(path: Path, graph_store: GraphStore, vector_store: VectorStore |
     embedding failure for one chunk is caught the same way an extraction
     failure is, so it doesn't abort the rest of the run. `vector_store`
     defaults to None so existing callers that don't pass one are unaffected.
+
+    Locking (fine-grained, 2026-07-10): the slow per-chunk LLM extraction
+    runs OUTSIDE GRAPH_LOCK; only the fast in-memory graph/vector mutation
+    for each chunk (and the final persist) holds it. Concurrent chat queries
+    therefore wait microseconds per mutation instead of ~80s per file, and
+    traverse whatever concepts have landed so far.
     """
     try:
         document = load_file(path)
@@ -56,12 +63,14 @@ def ingest_file(path: Path, graph_store: GraphStore, vector_store: VectorStore |
     for chunk in chunks:
         try:
             result = extract_from_chunk(chunk)
-            chunk_node_ids = graph_store.add_extraction_result(chunk, result)
-            node_ids.extend(chunk_node_ids)
-            if vector_store is not None:
-                vector_store.add_chunk(chunk, chunk_node_ids)
+            with GRAPH_LOCK:
+                chunk_node_ids = graph_store.add_extraction_result(chunk, result)
+                node_ids.extend(chunk_node_ids)
+                if vector_store is not None:
+                    vector_store.add_chunk(chunk, chunk_node_ids)
         except Exception:
             logger.exception("Failed to process chunk %s from %s; skipping chunk", chunk.chunk_id, path)
 
-    graph_store.persist(Path(GRAPH_STORE_PATH))
+    with GRAPH_LOCK:
+        graph_store.persist(Path(GRAPH_STORE_PATH))
     return IngestResult(source_path=path, chunk_count=len(chunks), node_ids=node_ids)

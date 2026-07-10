@@ -19,18 +19,24 @@ from backend.ingestion import pipeline
 from backend.ingestion.hash_store import compute_file_hash, load_hash_store, save_hash_store
 
 
-def process_file_change(path: Path, graph_store, vector_store, hash_store_path: Path) -> bool:
+def process_file_change(path: Path, graph_store, vector_store, hash_store_path: Path, resolve: bool = True) -> bool:
     """
     Hash `path` and compare against the persisted hash store.
 
     If the hash is unchanged, skip re-extraction and return False. If the
     file is new or its content changed, run the ingestion pipeline on it,
-    re-run cross-file entity resolution over the whole graph, update the
-    hash store with the new hash, and return True.
+    re-run cross-file entity resolution over the whole graph (unless
+    `resolve` is False — the startup diff-scan processes many files and runs
+    ONE resolution pass at the end instead), update the hash store with the
+    new hash, and return True.
 
-    The pipeline/resolution/hash-store-update section that mutates shared
-    graph_store/vector_store state is wrapped in GRAPH_LOCK (Issue 17) so a
-    concurrent query read never observes a partially-updated graph.
+    Locking (fine-grained, 2026-07-10): this function no longer holds
+    GRAPH_LOCK for the whole file — pipeline.ingest_file and the resolver
+    take it internally around each individual graph/vector mutation, so
+    concurrent chat queries interleave freely with the slow LLM work and
+    traverse whatever is already in the graph. Only the hash-store
+    read-modify-write below is briefly locked (serializing concurrent
+    watcher callbacks against each other).
     """
     current_hash = compute_file_hash(path)
     hashes = load_hash_store(hash_store_path)
@@ -39,10 +45,12 @@ def process_file_change(path: Path, graph_store, vector_store, hash_store_path: 
     if hashes.get(key) == current_hash:
         return False
 
-    with GRAPH_LOCK:
-        pipeline.ingest_file(path, graph_store, vector_store=vector_store)
+    pipeline.ingest_file(path, graph_store, vector_store=vector_store)
+    if resolve:
         resolver.resolve_all(graph_store)
 
+    with GRAPH_LOCK:
+        hashes = load_hash_store(hash_store_path)
         hashes[key] = current_hash
         save_hash_store(hashes, hash_store_path)
     return True

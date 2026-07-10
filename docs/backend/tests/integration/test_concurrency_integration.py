@@ -5,33 +5,27 @@ ingestion-write / query-read scenarios.
 import threading
 import time
 
+from backend.concurrency.lock import GRAPH_LOCK
 from backend.graph_store.store import GraphStore
 from backend.ingestion.watcher import process_file_change
 from backend.query_service import answer_query
 
 
-def test_query_during_ingestion_write_never_sees_partial_graph(
+def test_query_completes_during_slow_ingestion_and_sees_consistent_state(
     sample_graph, chroma_test_client, mock_extraction_llm, monkeypatch, tmp_path
 ):
     """
-    Given an ingestion write in progress (simulated with a controlled delay)
-    and a concurrent query read,
-    when both run concurrently,
-    the query read should observe either the fully-pre-write or
-    fully-post-write graph state, never a partial mutation.
+    Given a slow ingestion in progress (simulating per-chunk LLM extraction
+    with a sleep OUTSIDE the lock, then a locked mutation — the fine-grained
+    locking model, 2026-07-10),
+    when queries run concurrently,
+    they complete WHILE the ingestion is still mid-file (previously they
+    queued behind a whole-file lock for the LLM's full duration) and only
+    ever observe consistent per-mutation node counts — they traverse
+    whatever concepts have already landed.
 
-    `pipeline.ingest_file` is monkeypatched to add two nodes with a sleep in
-    between (simulating a multi-step write), so an unguarded read would have
-    a real chance of observing the graph mid-mutation (3 -> 4 -> 5 nodes).
-    `resolver.resolve_all` is monkeypatched to a no-op since entity
-    resolution's own correctness isn't this test's concern and would
-    otherwise make real (unmocked) embedding calls. `query_service.
-    seed_from_query` is replaced with a spy that records
-    `graph_store.graph.number_of_nodes()` every time the read's locked
-    seeding section actually executes, which is exactly the window we want
-    to inspect.
-
-    Source: Feature: Ingestion/Query Lock Guarding — criterion 1; Issue 17 — criterion 1
+    Source: Issue 17, amended by the fine-grained locking rework (user
+    request: "chat should traverse the graphs that are already there").
     """
     graph_store = GraphStore(graph=sample_graph)
     vector_store = chroma_test_client
@@ -44,21 +38,22 @@ def test_query_during_ingestion_write_never_sees_partial_graph(
     write_started = threading.Event()
 
     def fake_ingest_file(path, gs, vector_store=None):
-        """Add two nodes with a sleep in between, simulating a multi-step write with a real race window."""
-        gs.graph.add_node("concept_interim", id="concept_interim", name="Interim", description="", source_files=[str(path)])
+        """Mimic the real pipeline's locking: slow work unlocked, mutations locked."""
         write_started.set()
-        time.sleep(0.3)
-        gs.graph.add_node("concept_final", id="concept_final", name="Final", description="", source_files=[str(path)])
+        time.sleep(0.5)  # "LLM extraction" — holds NO lock
+        with GRAPH_LOCK:
+            gs.graph.add_node("concept_interim", id="concept_interim", name="Interim", description="", source_files=[str(path)])
+        time.sleep(0.5)  # second "chunk extraction"
+        with GRAPH_LOCK:
+            gs.graph.add_node("concept_final", id="concept_final", name="Final", description="", source_files=[str(path)])
 
     monkeypatch.setattr("backend.ingestion.watcher.pipeline.ingest_file", fake_ingest_file)
     monkeypatch.setattr("backend.ingestion.watcher.resolver.resolve_all", lambda gs: None)
 
-    post_count = pre_count + 2
-
     observed_counts = []
 
     def spy_seed_from_query(query, vs):
-        """Record the graph's node count at the exact moment the read's locked seeding section runs, then return no seeds so answer_query short-circuits quickly."""
+        """Record the node count at the moment the read's locked seeding section runs; return no seeds so answer_query short-circuits quickly."""
         observed_counts.append(graph_store.graph.number_of_nodes())
         return []
 
@@ -67,7 +62,7 @@ def test_query_during_ingestion_write_never_sees_partial_graph(
     errors = []
 
     def run_write():
-        """Run the (faked) ingestion write on a background thread."""
+        """Run the (faked) slow ingestion on a background thread."""
         try:
             process_file_change(sample_file, graph_store, vector_store, hash_store_path)
         except Exception as exc:  # pragma: no cover - surfaced via `errors` assertion below
@@ -77,32 +72,19 @@ def test_query_during_ingestion_write_never_sees_partial_graph(
     write_thread.start()
     assert write_started.wait(timeout=2), "write never started"
 
-    reader_stop = threading.Event()
-
-    def run_reader():
-        """Repeatedly issue queries while the write is in flight, until told to stop."""
-        while not reader_stop.is_set():
-            try:
-                answer_query("what is this about?", graph_store, vector_store, cutoff=0.35)
-            except Exception as exc:  # pragma: no cover - surfaced via `errors` assertion below
-                errors.append(exc)
-            time.sleep(0.01)
-
-    reader_thread = threading.Thread(target=run_reader)
-    reader_thread.start()
+    # THE new guarantee: a query issued mid-ingestion completes long before
+    # the ingestion does, instead of queuing behind a whole-file lock.
+    result = answer_query("what is this about?", graph_store, vector_store, cutoff=0.35)
+    assert result["no_match"] is True
+    assert write_thread.is_alive(), "ingestion should still be mid-file when the query returns"
 
     write_thread.join(timeout=5)
     assert not write_thread.is_alive(), "write thread never finished"
-    reader_stop.set()
-    reader_thread.join(timeout=5)
-    assert not reader_thread.is_alive(), "reader thread never finished"
-
     assert not errors, f"unexpected errors in background threads: {errors}"
-    assert graph_store.graph.number_of_nodes() == post_count
+    assert graph_store.graph.number_of_nodes() == pre_count + 2
+    # Reads only ever saw whole-mutation states: pre, +1, or +2 nodes.
     assert observed_counts, "no reads were captured during the test"
-    assert set(observed_counts) <= {pre_count, post_count}, (
-        f"observed a partial/torn node count outside {{{pre_count}, {post_count}}}: {observed_counts}"
-    )
+    assert set(observed_counts) <= {pre_count, pre_count + 1, pre_count + 2}
 
 
 def test_near_simultaneous_file_change_and_query_do_not_deadlock(

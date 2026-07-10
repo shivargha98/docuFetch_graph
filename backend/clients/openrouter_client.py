@@ -226,18 +226,44 @@ _ADJUDICATION_SYSTEM_PROMPT = (
 )
 
 
+# Successful adjudication verdicts keyed by the (order-insensitive) pair of
+# "name: description" texts. Entity resolution re-compares the whole graph
+# after every ingested file, so without this the SAME ambiguous pairs cost a
+# fresh Haiku call (~1s each) on every pass — the dominant ingestion cost
+# once embeddings went local. Error fallbacks are never cached.
+_adjudication_cache: dict[tuple[str, str], dict] = {}
+
+
+def clear_adjudication_cache() -> None:
+    """Drop all cached merge verdicts (used by tests; harmless in production)."""
+    _adjudication_cache.clear()
+
+
+def _adjudication_key(concept_a: dict, concept_b: dict) -> tuple[str, str]:
+    """Order-insensitive cache key for a concept pair."""
+    a = f"{concept_a.get('name')}: {concept_a.get('description')}"
+    b = f"{concept_b.get('name')}: {concept_b.get('description')}"
+    return (a, b) if a <= b else (b, a)
+
+
 def adjudicate_merge(concept_a: dict, concept_b: dict) -> dict:
     """
     Ask the adjudication model (ANTHROPIC_MODEL, Claude Haiku) whether
     concept_a and concept_b (each a dict with "name"/"description" keys)
     refer to the same real-world thing and should be merged, for entity
-    resolution's ambiguous embedding-similarity band (Issue 5).
+    resolution's ambiguous embedding-similarity band (Issue 5). Verdicts are
+    cached per pair (see _adjudication_cache) so repeated resolution passes
+    don't re-ask the model.
 
     Returns a dict shaped like {"merge": bool}. If the API call fails or the
     response isn't valid JSON, the exception is caught and {"merge": False}
-    is returned instead, so a malformed adjudication response doesn't crash
-    resolution or force an incorrect merge.
+    is returned instead (uncached), so a malformed adjudication response
+    doesn't crash resolution or force an incorrect merge.
     """
+    key = _adjudication_key(concept_a, concept_b)
+    cached = _adjudication_cache.get(key)
+    if cached is not None:
+        return dict(cached)
     try:
         completion = _anthropic_client.messages.create(
             model=ANTHROPIC_MODEL,
@@ -252,7 +278,9 @@ def adjudicate_merge(concept_a: dict, concept_b: dict) -> dict:
             ],
         )
         content = completion.content[0].text
-        return json.loads(content)
+        decision = json.loads(content)
+        _adjudication_cache[key] = dict(decision)
+        return decision
     except Exception:
         logger.exception("Anthropic adjudicate_merge call failed or returned unparseable output")
         return {"merge": False}
