@@ -192,6 +192,45 @@ describe("ChatDockToggle", () => {
     expect(screen.queryByTestId("chat-unread-badge")).not.toBeInTheDocument();
   });
 
+  it("shows a thinking indicator while a query is in flight and clears it when the answer lands", async () => {
+    /**
+     * Given a submitted question whose answer hasn't arrived yet,
+     * then the expanded dock shows a visible "thinking" row (the user must
+     * see the app is working — previously the transcript sat stagnant for
+     * the whole traversal);
+     * when the answer arrives,
+     * then the indicator disappears.
+     */
+    const user = userEvent.setup();
+    const ws = mockWebSocket();
+    const apiRef: { current: UseChatSessionResult | null } = { current: null };
+    render(
+      <AppProviders>
+        <SessionHarness apiRef={apiRef} />
+        <ChatDock />
+      </AppProviders>
+    );
+
+    act(() => {
+      ws.emitOpen();
+    });
+    await user.click(screen.getByTestId("chat-dock-toggle"));
+    expect(screen.queryByTestId("chat-thinking")).not.toBeInTheDocument();
+
+    act(() => {
+      apiRef.current!.submit("What is docuFetch?");
+    });
+
+    expect(screen.getByTestId("chat-thinking")).toBeInTheDocument();
+
+    act(() => {
+      ws.emitMessage({ type: "answer", text: "A personal LLM wiki." });
+    });
+
+    expect(screen.queryByTestId("chat-thinking")).not.toBeInTheDocument();
+    expect(screen.getByText("A personal LLM wiki.")).toBeInTheDocument();
+  });
+
   it("continues updating an in-progress traversal while the dock is collapsed", async () => {
     /**
      * Given a traversal in progress while the dock is collapsed (its default

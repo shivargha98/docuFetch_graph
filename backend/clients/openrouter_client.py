@@ -8,29 +8,40 @@ resolution's ambiguous band (Issue 5).
 The three chat roles (extraction/traversal/adjudication) call the Anthropic
 API directly with ANTHROPIC_MODEL (Claude Haiku) — swapped from OpenRouter
 because the free-tier OpenRouter reasoning model returned empty content for
-these prompts (see docs/backend/backend_context.md). Embeddings call the
-Gemini API (GEMINI_EMBED_MODEL via the `openai` SDK pointed at Google's
-OpenAI-compatible endpoint) — swapped from OpenRouter's free-tier embed
-model after its rate limits killed ingestion runs; Anthropic has no
-embeddings API. The module keeps its historical name because every call
-site and test fixture monkeypatches functions on
+these prompts (see docs/backend/backend_context.md). Embeddings run LOCALLY
+via fastembed (EMBED_MODEL, an ONNX model downloaded once on first use) —
+swapped from hosted APIs (OpenRouter, then Gemini) whose free-tier rate
+limits throttled ingestion; local CPU embedding is milliseconds per text
+with no keys or quotas. The module keeps its historical name because every
+call site and test fixture monkeypatches functions on
 `backend.clients.openrouter_client`.
 """
 import json
 import logging
 import math
+from functools import lru_cache
 
 from anthropic import Anthropic
-from openai import OpenAI
+from fastembed import TextEmbedding
 
-from backend.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, GEMINI_EMBED_MODEL, GOOGLE_API_KEY
+from backend.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, EMBED_MODEL
 
 logger = logging.getLogger(__name__)
 
-_gemini_client = OpenAI(
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=GOOGLE_API_KEY
-)
 _anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# Lazily constructed on first embed: TextEmbedding() loads (and on the very
+# first run downloads) the ONNX model — seconds of work that must not happen
+# at import time (server boot, test collection).
+_embedding_model: TextEmbedding | None = None
+
+
+def _get_embedding_model() -> TextEmbedding:
+    """Return the process-wide fastembed model, constructing it on first use."""
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = TextEmbedding(model_name=EMBED_MODEL)
+    return _embedding_model
 
 _EXTRACTION_SYSTEM_PROMPT = (
     "You extract concepts and typed relations from a piece of text. "
@@ -118,10 +129,32 @@ def extract_concepts(chunk_text: str) -> dict:
         return {"concepts": [], "relations": []}
 
 
+@lru_cache(maxsize=8192)
+def _embed_text_uncached(text: str) -> tuple[float, ...]:
+    """
+    Compute + unit-normalize the embedding for `text` (cached by exact text).
+
+    The cache exists because entity resolution re-embeds every node's
+    "{name}: {description}" text on every per-file resolve_all pass — the
+    cache collapses those repeats to one computation each. Exceptions are
+    never cached (lru_cache only stores successful returns).
+    """
+    vector = [float(component) for component in next(iter(_get_embedding_model().embed([text])))]
+    norm = math.sqrt(sum(component * component for component in vector))
+    return tuple(component / norm for component in vector) if norm else tuple(vector)
+
+
+def clear_embedding_cache() -> None:
+    """Drop all cached embeddings (used by tests; harmless in production)."""
+    _embed_text_uncached.cache_clear()
+
+
 def embed_text(text: str) -> list[float]:
     """
-    Return a unit-normalized embedding vector for `text` using
-    GEMINI_EMBED_MODEL via Google's OpenAI-compatible endpoint.
+    Return a unit-normalized embedding vector for `text`, computed locally
+    by the fastembed EMBED_MODEL. Identical texts are served from an
+    in-process cache (see _embed_text_uncached); each call returns a fresh
+    list, so callers may mutate their copy.
 
     Unlike extract_concepts, a failure here is NOT swallowed into an empty/
     zero-vector fallback: it propagates as an exception. A silently-returned
@@ -129,17 +162,11 @@ def embed_text(text: str) -> list[float]:
     corrupting similarity search, whereas callers contain the failure per
     chunk/file (vector_store, diff_scan's per-file guard).
 
-    The vector is normalized client-side: Gemini embeddings aren't
-    guaranteed unit-length (especially at reduced dimensionality), and both
-    NO_MATCH_SIMILARITY_CUTOFF and the entity-resolution bands assume
-    Chroma's squared-L2 over unit vectors (= 2 - 2*cosine).
+    The vector is normalized defensively (most fastembed models already
+    emit unit vectors): NO_MATCH_SIMILARITY_CUTOFF and the entity-resolution
+    bands assume Chroma's squared-L2 over unit vectors (= 2 - 2*cosine).
     """
-    completion = _gemini_client.embeddings.create(
-        model=GEMINI_EMBED_MODEL, input=text, encoding_format="float"
-    )
-    vector = completion.data[0].embedding
-    norm = math.sqrt(sum(component * component for component in vector))
-    return [component / norm for component in vector] if norm else vector
+    return list(_embed_text_uncached(text))
 
 
 _TRAVERSAL_SYSTEM_PROMPT = (

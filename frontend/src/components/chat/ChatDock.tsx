@@ -94,6 +94,19 @@ export function ChatDock() {
         className={cn("h-[28rem] max-h-[70vh] flex-col gap-3 p-4", open ? "flex" : "hidden")}
       >
         <ChatTranscript messages={messages} />
+        {queryInProgress && (
+          <p
+            data-testid="chat-thinking"
+            className="flex items-center gap-2 font-mono text-xs text-text-secondary"
+          >
+            <span aria-hidden="true" className="flex gap-1">
+              <span className="h-1.5 w-1.5 motion-safe:animate-pulse rounded-full bg-ion" />
+              <span className="h-1.5 w-1.5 motion-safe:animate-pulse rounded-full bg-ion [animation-delay:200ms]" />
+              <span className="h-1.5 w-1.5 motion-safe:animate-pulse rounded-full bg-synapse [animation-delay:400ms]" />
+            </span>
+            Thinking — traversing the graph…
+          </p>
+        )}
         <ChatInput onSubmit={submit} disabled={queryInProgress} />
       </div>
     </div>

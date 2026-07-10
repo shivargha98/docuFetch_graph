@@ -9,7 +9,7 @@ dependencies = [
     "uvicorn",
     "networkx",
     "python-dotenv",
-    "openai",
+    "fastembed",
     "anthropic",
     "chromadb",
     "pdfplumber",

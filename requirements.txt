@@ -2,7 +2,7 @@ fastapi
 uvicorn
 networkx
 python-dotenv
-openai
+fastembed
 anthropic
 pytest
 pytest-asyncio

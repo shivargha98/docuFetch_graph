@@ -199,6 +199,24 @@ export function GraphView({ className }: GraphViewProps) {
     fg.d3Force("y", forceY(0).strength(0.08));
   }, []);
 
+  // Opening zoom (user feedback: the default zoom 1 showed the compact
+  // layout too small): when a graph first loads, the view is PLACED
+  // instantly (0ms — placement, not motion) centered on the origin at a
+  // closer zoom, once per load; from then on the camera is entirely the
+  // user's (drag/wheel + the +/− buttons). Re-armed when the graph empties.
+  const hasPlacedCameraRef = useRef(false);
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (state.nodes.length === 0) {
+      hasPlacedCameraRef.current = false;
+      return;
+    }
+    if (!fg || hasPlacedCameraRef.current) return;
+    hasPlacedCameraRef.current = true;
+    fg.centerAt(0, 0, 0);
+    fg.zoom(1.8, 0);
+  }, [state.nodes.length]);
+
   /**
    * Settle-then-freeze (stillness as a guarantee): when the simulation
    * cools, pin every node at its settled position — pinned nodes are
