@@ -50,10 +50,15 @@ def generate_answer(context: str, query: str, history: list[dict]) -> str:
 
 
 _RELEVANCE_SYSTEM_PROMPT = (
-    "You judge whether a piece of context contains enough information to "
-    "substantively answer a user's question. Respond with exactly one "
-    "word: RELEVANT if the context substantively answers the question, or "
-    "NOT_RELEVANT if it does not. Do not include any other text."
+    "You judge whether a piece of context is topically relevant to a user's "
+    "question and contains information useful for answering it, even if "
+    "only partially, indirectly, or by requiring simple inference (e.g. "
+    "comparing dates mentioned in the context to answer a \"newest\"/"
+    "\"latest\" question). Respond with exactly one word: RELEVANT if the "
+    "context is on-topic and could help answer the question, or "
+    "NOT_RELEVANT only if the context is about a genuinely different topic "
+    "and gives no useful information toward answering the question. Do not "
+    "include any other text."
 )
 
 
